@@ -60,6 +60,9 @@ export class GroqVisionProvider implements VisionProvider {
         ],
         response_format: { type: "json_object" },
         temperature: 0,
+        // Groq's free tier has a small output-tokens-per-minute budget; cap
+        // the response so one recognition call doesn't burn most of it.
+        max_tokens: 400,
       }),
     });
 

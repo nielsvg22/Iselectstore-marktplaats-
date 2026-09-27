@@ -49,6 +49,9 @@ export class ProductImageRecognitionService {
           fieldLabels,
         });
       } catch (err) {
+        // Log the real provider error server-side (status codes, rate limits,
+        // ...) but never leak provider internals to the client response.
+        console.error("ProductImageRecognitionService: provider error", err);
         throw new Error("De AI-service is tijdelijk niet beschikbaar.");
       }
       raw.push({ imageIndex: i, result });
