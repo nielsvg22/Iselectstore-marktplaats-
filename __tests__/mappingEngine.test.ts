@@ -13,7 +13,7 @@ describe("mock category attributes", () => {
     const attrs = getMockCategoryAttributes("UNVERIFIED");
     const storage = attrs.find((a) => a.key === "mock_opslagcapaciteit");
     expect(storage?.type).toBe("LIST");
-    expect(storage?.options?.map((o) => o.value)).toContain("512GB");
+    expect(storage?.options?.map((o) => o.value)).toContain("512");
     expect(storage?.writable).toBe(true);
   });
 });

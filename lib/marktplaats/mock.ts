@@ -23,11 +23,11 @@ const MOCK_ATTRIBUTES_BY_L2: Record<string, MarktplaatsCategoryAttribute[]> = {
       writable: true,
       updateable: true,
       options: [
-        { value: "64GB", labels: { nl: "64 GB" } },
-        { value: "128GB", labels: { nl: "128 GB" } },
-        { value: "256GB", labels: { nl: "256 GB" } },
-        { value: "512GB", labels: { nl: "512 GB" } },
-        { value: "1TB", labels: { nl: "1 TB" } },
+        { value: "64", labels: { nl: "64 GB" } },
+        { value: "128", labels: { nl: "128 GB" } },
+        { value: "256", labels: { nl: "256 GB" } },
+        { value: "512", labels: { nl: "512 GB" } },
+        { value: "1024", labels: { nl: "1 TB" } },
       ],
     },
     {
@@ -39,11 +39,11 @@ const MOCK_ATTRIBUTES_BY_L2: Record<string, MarktplaatsCategoryAttribute[]> = {
       writable: true,
       updateable: true,
       options: [
-        { value: "8GB", labels: { nl: "8 GB" } },
-        { value: "16GB", labels: { nl: "16 GB" } },
-        { value: "18GB", labels: { nl: "18 GB" } },
-        { value: "24GB", labels: { nl: "24 GB" } },
-        { value: "32GB", labels: { nl: "32 GB" } },
+        { value: "8", labels: { nl: "8 GB" } },
+        { value: "16", labels: { nl: "16 GB" } },
+        { value: "18", labels: { nl: "18 GB" } },
+        { value: "24", labels: { nl: "24 GB" } },
+        { value: "32", labels: { nl: "32 GB" } },
       ],
     },
     {
