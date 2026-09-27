@@ -1,6 +1,14 @@
 // Thin Shopify Admin REST client. Shopify is the source of truth: this
 // module only reads/writes the same store the storefront theme uses, via
-// the `mkt` metafield namespace for structured product data.
+// an app-reserved metafield namespace for structured product data. Using
+// $app: means these fields are private to this app and never show up in
+// Shopify's generic native metafields UI — only our own Admin UI
+// extension surfaces them, filtered per product type.
+
+/** Resolved app-reserved namespace: $app:mkt -> app--{appId}--mkt. Must match
+ * the namespace used when creating the metafield definitions (see
+ * MARKTPLAATS_INTEGRATION.md) and the Shopify extension's utils.js. */
+const MKT_NAMESPACE = "app--428689915905--mkt";
 
 export interface ShopifyImage {
   id: number;
@@ -67,18 +75,16 @@ export async function listProducts(limit = 50): Promise<ShopifyProduct[]> {
 }
 
 export async function getProductMetafields(productId: string): Promise<ShopifyMetafield[]> {
-  const data = await shopifyFetch(`/products/${productId}/metafields.json?limit=250`);
+  const data = await shopifyFetch(`/products/${productId}/metafields.json?limit=250&namespace=${MKT_NAMESPACE}`);
   return data.metafields as ShopifyMetafield[];
 }
 
-/** Returns only the `mkt.*` structured fields as a flat key/value map. */
+/** Returns the structured fields (app-reserved `mkt` namespace) as a flat key/value map. */
 export async function getStructuredFields(productId: string): Promise<Record<string, string>> {
   const metafields = await getProductMetafields(productId);
   const out: Record<string, string> = {};
   for (const m of metafields) {
-    if (m.namespace === "mkt") {
-      out[m.key] = String(m.value);
-    }
+    out[m.key] = String(m.value);
   }
   return out;
 }
@@ -86,6 +92,6 @@ export async function getStructuredFields(productId: string): Promise<Record<str
 export async function setStructuredField(productId: string, key: string, value: string, type = "single_line_text_field") {
   return shopifyFetch(`/products/${productId}/metafields.json`, {
     method: "POST",
-    body: JSON.stringify({ metafield: { namespace: "mkt", key, value, type } }),
+    body: JSON.stringify({ metafield: { namespace: MKT_NAMESPACE, key, value, type } }),
   });
 }
