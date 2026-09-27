@@ -28,6 +28,8 @@ interface ProductPreview {
   mappingSource: "mock" | "cache" | "live";
   attributeResults: AttributeMappingResult[];
   validation: { checks: ValidationCheck[]; publishable: boolean };
+  imageUrls: string[];
+  payloadPreview: { priceModel: { askingPrice?: number } };
 }
 
 const statusIcon: Record<CheckStatus, string> = { ok: "✅", warning: "⚠", error: "❌" };
@@ -46,6 +48,7 @@ export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: strin
   const [publishResult, setPublishResult] = useState<{ advertisementId: string; mock: boolean } | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAdPreview, setShowAdPreview] = useState(false);
 
   async function call(url: string, key: string) {
     setLoading(key);
@@ -70,6 +73,15 @@ export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: strin
   async function testMapping() {
     const data = await call("/api/marktplaats/test-mapping", "test");
     if (data) setPreview(data.preview);
+  }
+
+  async function showAdPreviewCard() {
+    if (!preview) {
+      const data = await call("/api/marktplaats/test-mapping", "adpreview");
+      if (data) setPreview(data.preview);
+      else return;
+    }
+    setShowAdPreview(true);
   }
 
   async function showPayload() {
@@ -97,6 +109,9 @@ export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: strin
         <button onClick={showPayload} disabled={loading !== null} style={btnStyle()}>
           {loading === "payload" ? "Bezig…" : "Toon Marktplaats payload"}
         </button>
+        <button onClick={showAdPreviewCard} disabled={loading !== null} style={btnStyle()}>
+          {loading === "adpreview" ? "Bezig…" : "Voorbeeld advertentie"}
+        </button>
         <button onClick={fullApiTest} disabled={loading !== null} style={btnStyle()}>
           {loading === "fulltest" ? "Bezig…" : "Volledige Marktplaats API-test"}
         </button>
@@ -106,6 +121,8 @@ export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: strin
       </div>
 
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: 12, color: "#991b1b" }}>{error}</div>}
+
+      {preview && showAdPreview && <MarktplaatsAdPreview preview={preview} />}
 
       {preview && (
         <div style={cardStyle()}>
@@ -173,6 +190,53 @@ export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: strin
           ✅ Gepubliceerd{publishResult.mock ? " (mock)" : ""} — advertentie-ID: <code>{publishResult.advertisementId}</code>
         </div>
       )}
+    </div>
+  );
+}
+
+function formatPrice(cents: number | undefined): string {
+  if (!cents && cents !== 0) return "";
+  return new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(cents);
+}
+
+/**
+ * Illustrative mock-up of how the ad would render on Marktplaats — layout
+ * only, not an official Marktplaats template (we have no design assets from
+ * them). Uses the same title/description/price/images we'd actually send.
+ */
+function MarktplaatsAdPreview({ preview }: { preview: ProductPreview }) {
+  const price = preview.payloadPreview?.priceModel?.askingPrice;
+  const mainImage = preview.imageUrls[0];
+
+  return (
+    <div style={{ ...cardStyle(), padding: 0, overflow: "hidden" }}>
+      <div style={{ background: "#f3f4f6", padding: "8px 16px", fontSize: 12, color: "#6b7280", borderBottom: "1px solid #e7e9ec" }}>
+        Voorbeeld — indicatieve weergave, geen officieel Marktplaats-sjabloon
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 20, padding: 20 }}>
+        <div style={{ flex: "0 0 260px" }}>
+          {mainImage ? (
+            <img src={mainImage} alt={preview.marktplaatsTitle} style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", borderRadius: 8, background: "#f3f4f6" }} />
+          ) : (
+            <div style={{ width: "100%", aspectRatio: "4/3", background: "#f3f4f6", borderRadius: 8, display: "grid", placeItems: "center", color: "#9ca3af", fontSize: 13 }}>Geen foto</div>
+          )}
+          {preview.imageUrls.length > 1 && (
+            <div style={{ display: "flex", gap: 6, marginTop: 8, overflowX: "auto" }}>
+              {preview.imageUrls.slice(1, 5).map((src, i) => (
+                <img key={i} src={src} alt="" style={{ width: 50, height: 50, objectFit: "cover", borderRadius: 6, background: "#f3f4f6" }} />
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ flex: "1 1 280px", minWidth: 240 }}>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>
+            {preview.categoryMapping ? `${preview.categoryMapping.l1CategoryName} > ${preview.categoryMapping.l2CategoryName}` : "Categorie onbekend"}
+          </div>
+          <h2 style={{ fontSize: 20, margin: "0 0 8px", lineHeight: 1.25 }}>{preview.marktplaatsTitle || "(geen titel)"}</h2>
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#1f3049", marginBottom: 14 }}>{formatPrice(price) || "Prijs onbekend"}</div>
+          <div style={{ whiteSpace: "pre-wrap", fontSize: 14, color: "#374151", lineHeight: 1.5 }}>{preview.marktplaatsDescription}</div>
+        </div>
+      </div>
     </div>
   );
 }
