@@ -90,7 +90,9 @@ export function SoldImageSettingsForm({ initial }: { initial: Settings }) {
               style={inputStyle()}
             />
             <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>
-              &quot;Direct&quot; betekent: binnen de eerstvolgende controle (elke 15 min), niet realtime.
+              &quot;Direct&quot; (0 uur) is echt realtime — verwerkt zodra Shopify de voorraadwijziging meldt. Een
+              vertraging van X uur wordt pas verwerkt bij de eerstvolgende dagelijkse controle ná die X uur (Vercel
+              Hobby-limiet: max. 1x per dag), dus mogelijk later dan exact X uur.
             </div>
           </div>
         )}
