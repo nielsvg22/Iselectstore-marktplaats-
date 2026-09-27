@@ -11,7 +11,10 @@ export interface ShopifyImage {
 export interface ShopifyMetafield {
   namespace: string;
   key: string;
-  value: string;
+  // Shopify returns this as a native JSON number/boolean for metafields
+  // whose *definition* type is numeric/boolean (e.g. number_integer),
+  // even though older/untyped metafields come back as plain strings.
+  value: string | number | boolean;
   type: string;
 }
 
@@ -74,7 +77,7 @@ export async function getStructuredFields(productId: string): Promise<Record<str
   const out: Record<string, string> = {};
   for (const m of metafields) {
     if (m.namespace === "mkt") {
-      out[m.key] = m.value;
+      out[m.key] = String(m.value);
     }
   }
   return out;
