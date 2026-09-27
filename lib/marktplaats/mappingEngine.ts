@@ -1,9 +1,10 @@
 import { query } from "../db";
 import { MarktplaatsCategoryAttribute } from "./types";
-import { ProductTemplate } from "../templates/types";
+import { ProductTemplate, FIELD_LIBRARY } from "../templates/types";
 
 export interface AttributeMappingResult {
   internalField: string;
+  label: string;
   shopifyValue: string;
   marktplaatsAttributeKey: string | null;
   marktplaatsValue: string | number | null;
@@ -74,9 +75,10 @@ export async function mapProductToAttributes(
   const results: AttributeMappingResult[] = [];
 
   for (const internalField of template.marktplaatsAttributes) {
+    const label = FIELD_LIBRARY[internalField]?.label ?? internalField;
     const shopifyValue = data[internalField];
     if (!shopifyValue || shopifyValue.trim().length === 0) {
-      results.push({ internalField, shopifyValue: "", marktplaatsAttributeKey: null, marktplaatsValue: null, status: "missing_value" });
+      results.push({ internalField, label, shopifyValue: "", marktplaatsAttributeKey: null, marktplaatsValue: null, status: "missing_value" });
       continue;
     }
 
@@ -84,6 +86,7 @@ export async function mapProductToAttributes(
     if (!mpKey) {
       results.push({
         internalField,
+        label,
         shopifyValue,
         marktplaatsAttributeKey: null,
         marktplaatsValue: null,
@@ -97,6 +100,7 @@ export async function mapProductToAttributes(
     if (!attr) {
       results.push({
         internalField,
+        label,
         shopifyValue,
         marktplaatsAttributeKey: mpKey,
         marktplaatsValue: null,
@@ -107,17 +111,17 @@ export async function mapProductToAttributes(
     }
 
     if (!attr.writable) {
-      results.push({ internalField, shopifyValue, marktplaatsAttributeKey: mpKey, marktplaatsValue: null, status: "not_writable", note: "Attribuut is niet writable volgens de Marktplaats API." });
+      results.push({ internalField, label, shopifyValue, marktplaatsAttributeKey: mpKey, marktplaatsValue: null, status: "not_writable", note: "Attribuut is niet writable volgens de Marktplaats API." });
       continue;
     }
 
     const coerced = coerceValue(shopifyValue, attr);
     if (!coerced.ok) {
-      results.push({ internalField, shopifyValue, marktplaatsAttributeKey: mpKey, marktplaatsValue: null, status: "value_not_allowed", note: coerced.reason });
+      results.push({ internalField, label, shopifyValue, marktplaatsAttributeKey: mpKey, marktplaatsValue: null, status: "value_not_allowed", note: coerced.reason });
       continue;
     }
 
-    results.push({ internalField, shopifyValue, marktplaatsAttributeKey: mpKey, marktplaatsValue: coerced.coerced, status: "mapped" });
+    results.push({ internalField, label, shopifyValue, marktplaatsAttributeKey: mpKey, marktplaatsValue: coerced.coerced, status: "mapped" });
   }
 
   return results;

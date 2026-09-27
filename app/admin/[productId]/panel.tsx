@@ -12,6 +12,7 @@ interface ValidationCheck {
 
 interface AttributeMappingResult {
   internalField: string;
+  label: string;
   shopifyValue: string;
   marktplaatsAttributeKey: string | null;
   marktplaatsValue: string | number | null;
@@ -133,7 +134,7 @@ export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: strin
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {preview.attributeResults.map((r) => (
               <li key={r.internalField} style={{ padding: "4px 0", borderBottom: "1px solid #f0f0f0", fontSize: 14 }}>
-                {attrStatusIcon[r.status] ?? "•"} <b>{r.internalField}</b>: {r.shopifyValue || "—"}
+                {attrStatusIcon[r.status] ?? "•"} <b>{r.label}</b>: {r.shopifyValue || "—"}
                 {r.marktplaatsAttributeKey ? ` → ${r.marktplaatsAttributeKey} (${r.marktplaatsValue})` : ""}
                 {r.note && <span style={{ color: "#92400e", marginLeft: 6 }}>— {r.note}</span>}
               </li>
@@ -202,40 +203,102 @@ function formatPrice(cents: number | undefined): string {
 /**
  * Illustrative mock-up of how the ad would render on Marktplaats — layout
  * only, not an official Marktplaats template (we have no design assets from
- * them). Uses the same title/description/price/images we'd actually send.
+ * them, this is not the actual Marktplaats app/site). Modeled after
+ * screenshots of a real Marktplaats listing page. Uses the same
+ * title/description/price/images/attributes we'd actually send.
  */
 function MarktplaatsAdPreview({ preview }: { preview: ProductPreview }) {
+  const [activeImage, setActiveImage] = useState(0);
   const price = preview.payloadPreview?.priceModel?.askingPrice;
-  const mainImage = preview.imageUrls[0];
+  const images = preview.imageUrls;
+  const mainImage = images[activeImage];
+
+  const specs = preview.attributeResults.filter((r) => r.shopifyValue);
 
   return (
-    <div style={{ ...cardStyle(), padding: 0, overflow: "hidden" }}>
-      <div style={{ background: "#f3f4f6", padding: "8px 16px", fontSize: 12, color: "#6b7280", borderBottom: "1px solid #e7e9ec" }}>
-        Voorbeeld — indicatieve weergave, geen officieel Marktplaats-sjabloon
+    <div style={{ ...cardStyle(), padding: 0, overflow: "hidden", maxWidth: 420, margin: "0 auto" }}>
+      <div style={{ background: "#fff7ed", padding: "8px 16px", fontSize: 12, color: "#9a6b2a", borderBottom: "1px solid #fde3c4", textAlign: "center" }}>
+        Voorbeeld — indicatieve weergave, geen officiële Marktplaats-pagina
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 20, padding: 20 }}>
-        <div style={{ flex: "0 0 260px" }}>
-          {mainImage ? (
-            <img src={mainImage} alt={preview.marktplaatsTitle} style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", borderRadius: 8, background: "#f3f4f6" }} />
-          ) : (
-            <div style={{ width: "100%", aspectRatio: "4/3", background: "#f3f4f6", borderRadius: 8, display: "grid", placeItems: "center", color: "#9ca3af", fontSize: 13 }}>Geen foto</div>
-          )}
-          {preview.imageUrls.length > 1 && (
-            <div style={{ display: "flex", gap: 6, marginTop: 8, overflowX: "auto" }}>
-              {preview.imageUrls.slice(1, 5).map((src, i) => (
-                <img key={i} src={src} alt="" style={{ width: 50, height: 50, objectFit: "cover", borderRadius: 6, background: "#f3f4f6" }} />
-              ))}
-            </div>
-          )}
+
+      {/* Header bar, mimics Marktplaats' orange chrome */}
+      <div style={{ background: "#f47d21", padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", color: "#fff" }}>
+        <span style={{ fontSize: 20 }}>‹</span>
+        <div style={{ display: "flex", gap: 14, fontSize: 16 }}>
+          <span>♡</span>
+          <span>⤴</span>
         </div>
-        <div style={{ flex: "1 1 280px", minWidth: 240 }}>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>
-            {preview.categoryMapping ? `${preview.categoryMapping.l1CategoryName} > ${preview.categoryMapping.l2CategoryName}` : "Categorie onbekend"}
+      </div>
+
+      {/* Main image with counter */}
+      <div style={{ position: "relative", background: "#f3f4f6" }}>
+        {mainImage ? (
+          <img src={mainImage} alt={preview.marktplaatsTitle} style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", display: "block" }} />
+        ) : (
+          <div style={{ width: "100%", aspectRatio: "1/1", display: "grid", placeItems: "center", color: "#9ca3af", fontSize: 13 }}>Geen foto</div>
+        )}
+        {images.length > 0 && (
+          <span style={{ position: "absolute", left: 10, bottom: 10, background: "#000000b3", color: "#fff", fontSize: 12, padding: "3px 9px", borderRadius: 999 }}>
+            {activeImage + 1} / {images.length}
+          </span>
+        )}
+      </div>
+
+      {images.length > 1 && (
+        <div style={{ display: "flex", gap: 6, padding: "10px 14px", overflowX: "auto" }}>
+          {images.map((src, i) => (
+            <img
+              key={i}
+              src={src}
+              alt=""
+              onClick={() => setActiveImage(i)}
+              style={{
+                width: 50,
+                height: 50,
+                objectFit: "cover",
+                borderRadius: 6,
+                background: "#f3f4f6",
+                cursor: "pointer",
+                border: i === activeImage ? "2px solid #f47d21" : "2px solid transparent",
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <div style={{ padding: "16px 16px 4px" }}>
+        {/* Seller block — illustrative placeholder, not real seller data */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 14, borderBottom: "1px solid #f0f0f0", marginBottom: 14 }}>
+          <div style={{ width: 40, height: 40, borderRadius: "50%", background: "#e5e7eb", display: "grid", placeItems: "center", fontSize: 16, color: "#6b7280" }}>
+            🏪
           </div>
-          <h2 style={{ fontSize: 20, margin: "0 0 8px", lineHeight: 1.25 }}>{preview.marktplaatsTitle || "(geen titel)"}</h2>
-          <div style={{ fontSize: 26, fontWeight: 800, color: "#1f3049", marginBottom: 14 }}>{formatPrice(price) || "Prijs onbekend"}</div>
-          <div style={{ whiteSpace: "pre-wrap", fontSize: 14, color: "#374151", lineHeight: 1.5 }}>{preview.marktplaatsDescription}</div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: "#1f3049" }}>iSelectStore ✓</div>
+            <div style={{ fontSize: 12, color: "#6b7280" }}>★ Verkoper op Marktplaats</div>
+          </div>
         </div>
+
+        <h2 style={{ fontSize: 19, margin: "0 0 8px", lineHeight: 1.25, color: "#1f3049" }}>{preview.marktplaatsTitle || "(geen titel)"}</h2>
+        <div style={{ fontSize: 24, fontWeight: 800, color: "#1f3049", marginBottom: 14 }}>{formatPrice(price) || "Prijs onbekend"}</div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+          <div style={{ flex: 1, background: "#1f3049", color: "#fff", textAlign: "center", padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>💬 Bericht</div>
+          <div style={{ flex: 1, border: "1px solid #d1d5db", textAlign: "center", padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, color: "#1f3049" }}>🌐 Website</div>
+        </div>
+
+        {specs.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 12px", paddingBottom: 16, borderBottom: "1px solid #f0f0f0", marginBottom: 16 }}>
+            {specs.map((s) => (
+              <div key={s.internalField}>
+                <div style={{ fontSize: 12, color: "#6b7280" }}>{s.label}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1f3049" }}>{s.shopifyValue}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <h3 style={{ fontSize: 15, margin: "0 0 8px", color: "#1f3049" }}>Beschrijving</h3>
+        <div style={{ whiteSpace: "pre-wrap", fontSize: 14, color: "#374151", lineHeight: 1.6, paddingBottom: 16 }}>{preview.marktplaatsDescription}</div>
       </div>
     </div>
   );
