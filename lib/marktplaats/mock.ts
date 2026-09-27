@@ -99,8 +99,6 @@ const MOCK_ATTRIBUTES_BY_L2: Record<string, MarktplaatsCategoryAttribute[]> = {
       ],
     },
     { key: "mock_fabrikant_naam", labels: { nl: "Handelsnaam fabrikant" }, type: "STRING", mandatory: false, searchable: false, writable: true, updateable: true },
-    { key: "mock_fabrikant_adres", labels: { nl: "Postadres fabrikant" }, type: "STRING", mandatory: false, searchable: false, writable: true, updateable: true },
-    { key: "mock_fabrikant_email", labels: { nl: "E-mailadres fabrikant" }, type: "STRING", mandatory: false, searchable: false, writable: true, updateable: true },
     { key: "mock_chip", labels: { nl: "Processor" }, type: "STRING", mandatory: false, searchable: true, writable: true, updateable: true },
     { key: "mock_kastmaat", labels: { nl: "Kastmaat" }, type: "STRING", mandatory: false, searchable: true, writable: true, updateable: true },
   ],

@@ -27,8 +27,6 @@ const iphone: ProductTemplate = {
     "sell_price",
     "new_price",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email"
   ),
   shopifyTitleFields: ["model", "storage_gb", "color"],
   shopifyFeatureFields: ["model", "storage_gb", "color", "sim_type", "battery_percentage", "condition", "warranty_months"],
@@ -36,7 +34,7 @@ const iphone: ProductTemplate = {
   marktplaatsDescriptionFields: ["battery_percentage", "warranty_months", "condition", "sim_type", "cosmetic_notes", "accessories", "box_included"],
   // Order matches the real Marktplaats "Telefoons | Apple" listing layout:
   // Conditie, Opslagcapaciteit, Abonnement, Simlock, Batterijconditie,
-  // Kleur, Handelsnaam/Postadres/E-mailadres fabrikant (EU GPSR fields).
+  // Kleur, Handelsnaam fabrikant (EU GPSR field).
   marktplaatsAttributes: [
     "condition",
     "storage_gb",
@@ -45,8 +43,6 @@ const iphone: ProductTemplate = {
     "battery_percentage",
     "color",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email",
   ],
 };
 
@@ -72,8 +68,6 @@ const ipad: ProductTemplate = {
     "subscription",
     "simlock",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email"
   ),
   shopifyTitleFields: ["model", "storage_gb", "wifi_cellular"],
   shopifyFeatureFields: ["model", "screen_size", "storage_gb", "color", "wifi_cellular", "battery_percentage", "condition", "warranty_months", "apple_pencil_support"],
@@ -87,8 +81,6 @@ const ipad: ProductTemplate = {
     "battery_percentage",
     "color",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email",
   ],
 };
 
@@ -115,14 +107,12 @@ const macbook: ProductTemplate = {
     "sell_price",
     "new_price",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email"
   ),
   shopifyTitleFields: ["model", "screen_size", "chip", "ram_gb", "storage_gb"],
   shopifyFeatureFields: ["model", "ram_gb", "storage_gb", "color", "chip", "battery_percentage", "condition", "warranty_months", "keyboard_layout", "cycle_count"],
   marktplaatsTitleExtraFields: ["battery_percentage", "warranty_months"],
   marktplaatsDescriptionFields: ["battery_percentage", "warranty_months", "condition", "cycle_count", "accessories", "cosmetic_notes"],
-  marktplaatsAttributes: ["condition", "ram_gb", "storage_gb", "color", "chip", "manufacturer_name", "manufacturer_address", "manufacturer_email"],
+  marktplaatsAttributes: ["condition", "ram_gb", "storage_gb", "color", "chip", "manufacturer_name"],
 };
 
 const imac: ProductTemplate = {
@@ -144,14 +134,12 @@ const imac: ProductTemplate = {
     "sell_price",
     "new_price",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email"
   ),
   shopifyTitleFields: ["model", "screen_size", "chip", "ram_gb", "storage_gb"],
   shopifyFeatureFields: ["model", "ram_gb", "storage_gb", "color", "chip", "condition", "warranty_months", "keyboard_included", "mouse_included"],
   marktplaatsTitleExtraFields: ["warranty_months"],
   marktplaatsDescriptionFields: ["warranty_months", "condition", "keyboard_included", "mouse_included", "cosmetic_notes"],
-  marktplaatsAttributes: ["condition", "ram_gb", "storage_gb", "color", "chip", "manufacturer_name", "manufacturer_address", "manufacturer_email"],
+  marktplaatsAttributes: ["condition", "ram_gb", "storage_gb", "color", "chip", "manufacturer_name"],
 };
 
 const macmini: ProductTemplate = {
@@ -171,14 +159,12 @@ const macmini: ProductTemplate = {
     "sell_price",
     "new_price",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email"
   ),
   shopifyTitleFields: ["model", "chip", "ram_gb", "storage_gb"],
   shopifyFeatureFields: ["model", "ram_gb", "storage_gb", "chip", "condition", "warranty_months"],
   marktplaatsTitleExtraFields: ["warranty_months"],
   marktplaatsDescriptionFields: ["warranty_months", "condition", "accessories", "cosmetic_notes"],
-  marktplaatsAttributes: ["condition", "ram_gb", "storage_gb", "chip", "manufacturer_name", "manufacturer_address", "manufacturer_email"],
+  marktplaatsAttributes: ["condition", "ram_gb", "storage_gb", "chip", "manufacturer_name"],
 };
 
 const applewatch: ProductTemplate = {
@@ -200,8 +186,6 @@ const applewatch: ProductTemplate = {
     "subscription",
     "simlock",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email"
   ),
   shopifyTitleFields: ["watch_series", "watch_case_size", "watch_connectivity"],
   shopifyFeatureFields: ["watch_series", "watch_case_size", "color", "watch_material", "watch_connectivity", "watch_band", "battery_percentage", "condition", "warranty_months"],
@@ -215,8 +199,6 @@ const applewatch: ProductTemplate = {
     "battery_percentage",
     "color",
     "manufacturer_name",
-    "manufacturer_address",
-    "manufacturer_email",
   ],
 };
 

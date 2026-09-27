@@ -103,10 +103,8 @@ export const FIELD_LIBRARY: Record<string, FieldDef> = {
     default: "Zonder simlock",
   },
 
-  // EU GPSR-verplichte fabrikantgegevens (constant voor alle Apple-producten)
+  // EU GPSR-verplichte fabrikantnaam (constant voor alle Apple-producten)
   manufacturer_name: { key: "manufacturer_name", label: "Handelsnaam fabrikant", kind: "text", required: false, default: "Apple" },
-  manufacturer_address: { key: "manufacturer_address", label: "Postadres fabrikant", kind: "text", required: false, default: "Apple Park Way, Cupertino, California" },
-  manufacturer_email: { key: "manufacturer_email", label: "E-mailadres fabrikant", kind: "text", required: false, default: "support@apple.com" },
 
   // MacBook / iMac / Mac mini
   screen_size: { key: "screen_size", label: "Schermformaat", kind: "text", required: false },
