@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AIRecognitionPanel } from "./AIRecognitionPanel";
 
 type CheckStatus = "ok" | "warning" | "error";
 
@@ -42,7 +43,7 @@ const attrStatusIcon: Record<string, string> = {
   value_not_allowed: "❌",
 };
 
-export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: string }) {
+export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyProductId: string; productType: string }) {
   const [preview, setPreview] = useState<ProductPreview | null>(null);
   const [payload, setPayload] = useState<unknown>(null);
   const [fullTestResult, setFullTestResult] = useState<{ passed: boolean; steps: { label: string; ok: boolean; detail?: string }[]; mock: boolean } | null>(null);
@@ -103,6 +104,8 @@ export function MarktplaatsPanel({ shopifyProductId }: { shopifyProductId: strin
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {productType && <AIRecognitionPanel shopifyProductId={shopifyProductId} productType={productType} />}
+
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button onClick={testMapping} disabled={loading !== null} style={btnStyle()}>
           {loading === "test" ? "Bezig…" : "Test Marktplaats mapping"}

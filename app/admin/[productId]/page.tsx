@@ -15,7 +15,7 @@ export default async function ProductAdminPage({ params }: { params: { productId
       <h1 style={{ fontSize: 22, marginTop: 8 }}>{product.title}</h1>
       <p style={{ color: "#6b7280", marginTop: 0 }}>Producttype: {product.product_type}</p>
 
-      <MarktplaatsPanel shopifyProductId={params.productId} />
+      <MarktplaatsPanel shopifyProductId={params.productId} productType={product.product_type} />
     </main>
   );
 }
