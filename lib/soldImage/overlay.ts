@@ -13,10 +13,13 @@ let fontRegistered = false;
 
 function ensureFontRegistered() {
   if (fontRegistered) return;
-  // Read via fs.readFileSync (not registerFromPath) so Next.js's serverless
-  // file tracing picks up this asset and bundles it with the function —
-  // a bare native-binding path lookup wouldn't be traced.
-  const fontBuffer = fs.readFileSync(path.join(__dirname, "assets", "sticker-font.ttf"));
+  // Resolve from process.cwd(), not __dirname: Next.js bundles this route
+  // handler into a single chunk under .next/server/chunks/, which changes
+  // __dirname at runtime to somewhere that no longer has an "assets"
+  // sibling. outputFileTracingIncludes (next.config.js) copies the asset
+  // preserving its repo-relative path under the function root instead,
+  // which process.cwd() reliably points at on Vercel.
+  const fontBuffer = fs.readFileSync(path.join(process.cwd(), "lib", "soldImage", "assets", "sticker-font.ttf"));
   GlobalFonts.register(fontBuffer, FONT_FAMILY);
   fontRegistered = true;
 }
