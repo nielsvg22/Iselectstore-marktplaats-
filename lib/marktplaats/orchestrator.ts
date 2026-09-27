@@ -38,12 +38,21 @@ async function getStoredOverrides(shopifyProductId: string): Promise<{ customTit
  */
 export async function buildProductPreview(shopifyProductId: string): Promise<ProductPreview> {
   const product: ShopifyProduct = await getProduct(shopifyProductId);
-  const data = await getStructuredFields(shopifyProductId);
+  const rawData = await getStructuredFields(shopifyProductId);
   const overrides = await getStoredOverrides(shopifyProductId);
 
   const template = getTemplate(product.product_type);
   if (!template) {
     throw new Error(`Geen producttemplate gevonden voor Shopify product type "${product.product_type}". Ondersteund: iPhone, iPad, MacBook, iMac, Mac mini, Apple Watch.`);
+  }
+
+  // Fill in constant/sensible defaults (e.g. manufacturer info, "zonder
+  // abonnement") for fields the merchant left empty in Shopify.
+  const data: Record<string, string> = { ...rawData };
+  for (const field of template.fields) {
+    if ((!data[field.key] || data[field.key].trim().length === 0) && field.default) {
+      data[field.key] = field.default;
+    }
   }
 
   const shopifyTitle = generateShopifyTitle(template, data);

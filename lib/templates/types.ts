@@ -24,6 +24,8 @@ export interface FieldDef {
   options?: string[];
   /** Free-text help shown in the admin form. */
   help?: string;
+  /** Used when the Shopify metafield is empty — e.g. constant manufacturer info. */
+  default?: string;
 }
 
 export interface ProductTemplate {
@@ -82,6 +84,29 @@ export const FIELD_LIBRARY: Record<string, FieldDef> = {
   sim_type: { key: "sim_type", label: "SIM", kind: "select", required: false, options: ["Fysieke SIM", "eSIM", "Fysieke SIM + eSIM"] },
   wifi_cellular: { key: "wifi_cellular", label: "Wi-Fi / Cellular", kind: "select", required: false, options: ["Wi-Fi", "Wi-Fi + Cellular"] },
   apple_pencil_support: { key: "apple_pencil_support", label: "Apple Pencil ondersteuning", kind: "boolean", required: false },
+
+  // Verplichte Marktplaats-kenmerken voor telefoons/tablets/wearables met SIM
+  subscription: {
+    key: "subscription",
+    label: "Abonnement",
+    kind: "select",
+    required: false,
+    options: ["Zonder abonnement", "Met abonnement"],
+    default: "Zonder abonnement",
+  },
+  simlock: {
+    key: "simlock",
+    label: "Simlock",
+    kind: "select",
+    required: false,
+    options: ["Zonder simlock", "Met simlock"],
+    default: "Zonder simlock",
+  },
+
+  // EU GPSR-verplichte fabrikantgegevens (constant voor alle Apple-producten)
+  manufacturer_name: { key: "manufacturer_name", label: "Handelsnaam fabrikant", kind: "text", required: false, default: "Apple" },
+  manufacturer_address: { key: "manufacturer_address", label: "Postadres fabrikant", kind: "text", required: false, default: "Apple Park Way, Cupertino, California" },
+  manufacturer_email: { key: "manufacturer_email", label: "E-mailadres fabrikant", kind: "text", required: false, default: "support@apple.com" },
 
   // MacBook / iMac / Mac mini
   screen_size: { key: "screen_size", label: "Schermformaat", kind: "text", required: false },
