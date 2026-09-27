@@ -26,6 +26,15 @@ export interface ShopifyMetafield {
   type: string;
 }
 
+export interface ShopifyVariant {
+  id: number;
+  price: string;
+  compare_at_price: string | null;
+  inventory_quantity: number;
+  /** null/"" means Shopify isn't tracking inventory for this variant — a 0 quantity there means nothing. */
+  inventory_management: string | null;
+}
+
 export interface ShopifyProduct {
   id: number;
   title: string;
@@ -33,7 +42,7 @@ export interface ShopifyProduct {
   vendor: string;
   body_html: string | null;
   images: ShopifyImage[];
-  variants: { id: number; price: string; compare_at_price: string | null; inventory_quantity: number }[];
+  variants: ShopifyVariant[];
 }
 
 function config() {
@@ -94,4 +103,25 @@ export async function setStructuredField(productId: string, key: string, value: 
     method: "POST",
     body: JSON.stringify({ metafield: { namespace: MKT_NAMESPACE, key, value, type } }),
   });
+}
+
+/** Uploads a new product image from raw bytes. Never touches existing images — used to add the generated "sold" image alongside the untouched original. */
+export async function addProductImage(productId: string, imageBuffer: Buffer, filename: string): Promise<ShopifyImage> {
+  const data = await shopifyFetch(`/products/${productId}/images.json`, {
+    method: "POST",
+    body: JSON.stringify({ image: { attachment: imageBuffer.toString("base64"), filename } }),
+  });
+  return data.image as ShopifyImage;
+}
+
+/** Moves one image to a given 1-based position; Shopify shifts the rest accordingly. */
+export async function setImagePosition(productId: string, imageId: number, position: number): Promise<void> {
+  await shopifyFetch(`/products/${productId}/images/${imageId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({ image: { id: imageId, position } }),
+  });
+}
+
+export async function deleteProductImage(productId: string, imageId: number): Promise<void> {
+  await shopifyFetch(`/products/${productId}/images/${imageId}.json`, { method: "DELETE" });
 }

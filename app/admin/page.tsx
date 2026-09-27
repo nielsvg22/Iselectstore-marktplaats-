@@ -12,6 +12,9 @@ export default async function AdminPage() {
     <main style={{ maxWidth: 900, margin: "0 auto", padding: "32px 20px" }}>
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Marktplaats</h1>
       <p style={{ color: "#6b7280", marginTop: 0 }}>Shopify blijft de source of truth — kies een product om de Marktplaats-mapping te bekijken.</p>
+      <Link href="/admin/sold-images" style={{ fontSize: 13, color: "#1f3049" }}>
+        ⚙️ VERKOCHT-sticker instellingen →
+      </Link>
 
       <div style={{ background: "#fff", border: "1px solid #e7e9ec", borderRadius: 12, padding: 16, marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
