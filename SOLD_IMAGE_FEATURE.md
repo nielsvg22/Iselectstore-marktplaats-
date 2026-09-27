@@ -15,24 +15,33 @@ Shopify voorraad → 0
   → webhook products/update (app/api/webhooks/products-update)
       → detectSoldOut.ts (puur, geen I/O): is dit product écht uitverkocht?
       → stateService.markPending()  (sold_image_state tabel, Neon)
-  → cron elke 15 min (app/api/cron/sold-images, vercel.json)
-      → soldImageService.runDueSoldImageJobs()
+      → direct (delay=0): soldImageService.processProductNow() binnen dezelfde
+        webhook-aanroep — geen wachttijd
           → haalt eerste foto op (lib/shopify/client.ts)
           → overlay.ts (sharp, puur): tekent VERKOCHT-band
           → addProductImage() + setImagePosition() — origineel blijft ongemoeid
           → stateService.markApplied()
+  → dagelijkse cron (app/api/cron/sold-images, vercel.json) als vangnet voor
+    rijen met een ingestelde vertraging (X uur) of een eerder mislukte poging
 
 Shopify voorraad weer > 0
-  → webhook → stateService.markRestoring()
-  → volgende cron-run → setImagePosition(origineel, 1) + verwijdert de
-    gegenereerde verkocht-foto → stateService.markRestored()
+  → webhook → stateService.markRestoring() → direct verwerkt (zelfde principe)
+      → setImagePosition(origineel, 1) + verwijdert de gegenereerde
+        verkocht-foto → stateService.markRestored()
 ```
 
-**Waarom een cron in plaats van direct verwerken in de webhook**: de
-"vertraging na X uur"-instelling vereist uitgestelde uitvoering. Een cron die
-elke 15 minuten kijkt welke rijen `apply_after <= now()` zijn, ondersteunt
-zowel "direct" (0 uur, binnen één cron-cyclus) als "na X uur" zonder een
-aparte queue-infrastructuur nodig te hebben.
+**Waarom niet gewoon een cron per X minuten**: Vercel's gratis (Hobby) plan
+staat alleen cron-jobs toe die **maximaal 1x per dag** draaien — vaker
+vereist een betaald Pro-abonnement. Daarom verwerkt de webhook zelf het
+"direct" (0 uur) en het herstel-geval meteen, en dient de dagelijkse cron
+alleen als vangnet voor de "na X uur"-instelling en voor eerder mislukte
+pogingen. **Concreet gevolg**: "direct" is écht direct (binnen de webhook-
+aanroep, meestal < 2 sec.); een ingestelde vertraging van bijv. "6 uur" wordt
+in de praktijk pas verwerkt bij de eerstvolgende dagelijkse cron-run (03:00
+'s nachts) ná die 6 uur — dus mogelijk pas de volgende ochtend, niet exact 6
+uur later. Wil je fijnmazigere vertraging, is een Vercel Pro-abonnement
+(cron elke X minuten) de aangewezen upgrade — de code hoeft dan alleen het
+`schedule`-veld in `vercel.json` aangepast te worden.
 
 ## Database (Neon, project `iselectstore-marktplaats`)
 

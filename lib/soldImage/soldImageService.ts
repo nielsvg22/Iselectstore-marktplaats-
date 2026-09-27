@@ -5,7 +5,7 @@
 // stay idempotent.
 import { getProduct, addProductImage, setImagePosition, deleteProductImage } from "../shopify/client";
 import { getSoldImageSettings } from "./settingsService";
-import { getDueStates, markApplied, markError, markRestored } from "./stateService";
+import { getDueStates, getSoldImageState, markApplied, markError, markRestored } from "./stateService";
 import { isSoldOut } from "./detectSoldOut";
 import { applySoldOverlay } from "./overlay";
 import { logSync } from "../logging";
@@ -77,6 +77,21 @@ async function processRestore(state: SoldImageState): Promise<void> {
   });
 }
 
+async function processOne(state: SoldImageState): Promise<void> {
+  try {
+    if (state.status === "pending") {
+      await processApply(state);
+    } else if (state.status === "restoring") {
+      await processRestore(state);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await markError(state.shopifyProductId, message);
+    await logSync({ shopifyProductId: state.shopifyProductId, action: "sold_image_error", message });
+    throw err;
+  }
+}
+
 /** Entry point for the cron worker: processes every state row whose delay has elapsed. */
 export async function runDueSoldImageJobs(): Promise<{ processed: number; errors: number }> {
   const due = await getDueStates();
@@ -84,18 +99,26 @@ export async function runDueSoldImageJobs(): Promise<{ processed: number; errors
 
   for (const state of due) {
     try {
-      if (state.status === "pending") {
-        await processApply(state);
-      } else if (state.status === "restoring") {
-        await processRestore(state);
-      }
-    } catch (err) {
+      await processOne(state);
+    } catch {
       errors++;
-      const message = err instanceof Error ? err.message : String(err);
-      await markError(state.shopifyProductId, message);
-      await logSync({ shopifyProductId: state.shopifyProductId, action: "sold_image_error", message });
     }
   }
 
   return { processed: due.length, errors };
+}
+
+/**
+ * Called directly from the webhook for the "direct" (0-hour delay) and
+ * restore cases so those don't have to wait for the once-a-day cron
+ * (Vercel Hobby plan only allows daily cron schedules). Silently does
+ * nothing if the product isn't actually due yet (e.g. a configured delay) —
+ * the daily cron remains the fallback for that case.
+ */
+export async function processProductNow(productId: string): Promise<void> {
+  const state = await getSoldImageState(productId);
+  if (!state) return;
+  if (state.status === "pending" && state.applyAfter && new Date(state.applyAfter) > new Date()) return;
+  if (state.status !== "pending" && state.status !== "restoring") return;
+  await processOne(state);
 }
