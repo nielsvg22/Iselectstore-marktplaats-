@@ -28,7 +28,7 @@ function buildProvider(name: string): VisionProvider | null {
     case "openrouter": {
       const apiKey = process.env.OPENROUTER_API_KEY;
       if (!apiKey) return null;
-      return new OpenRouterVisionProvider(apiKey, process.env.OPENROUTER_MODEL || "meta-llama/llama-3.2-11b-vision-instruct:free");
+      return new OpenRouterVisionProvider(apiKey, process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free");
     }
     default:
       throw new Error(`Onbekende AI_PROVIDER: ${name}`);

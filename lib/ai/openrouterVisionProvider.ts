@@ -44,7 +44,7 @@ export class OpenRouterVisionProvider implements VisionProvider {
   private apiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model = "meta-llama/llama-3.2-11b-vision-instruct:free") {
+  constructor(apiKey: string, model = "google/gemma-4-31b-it:free") {
     this.apiKey = apiKey;
     this.model = model;
   }

@@ -87,7 +87,7 @@ GEMINI_MODEL=gemini-3.8-flash    # zie https://ai.google.dev/gemini-api/docs voo
 GROQ_API_KEY=
 GROQ_MODEL=qwen/qwen3.8-27b
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=meta-llama/llama-3.2-11b-vision-instruct:free
+OPENROUTER_MODEL=google/gemma-4-31b-it:free
 
 # alleen nodig als AI_PROVIDER=openai:
 AI_API_KEY=
