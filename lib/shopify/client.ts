@@ -88,6 +88,12 @@ export async function getProductMetafields(productId: string): Promise<ShopifyMe
   return data.metafields as ShopifyMetafield[];
 }
 
+/** All metafields for a product (all namespaces) — used for product identity resolution. */
+export async function getAllProductMetafields(productId: string): Promise<ShopifyMetafield[]> {
+  const data = await shopifyFetch(`/products/${productId}/metafields.json?limit=250`);
+  return data.metafields as ShopifyMetafield[];
+}
+
 /** Returns the structured fields (app-reserved `mkt` namespace) as a flat key/value map. */
 export async function getStructuredFields(productId: string): Promise<Record<string, string>> {
   const metafields = await getProductMetafields(productId);

@@ -1,5 +1,5 @@
 import { ShopifyProduct, getProduct, listProducts } from "@/lib/shopify/client";
-import { extractProductIdentity, ProductIdentity } from "@/services/shopify/productIdentity";
+import { resolveProductIdentity, ProductIdentity } from "@/services/shopify/productIdentity";
 import { findActiveSubscriptions, markNotified } from "./subscriptionService";
 import { recordNotificationHistory, hasNotificationBeenSent } from "./notificationHistoryService";
 import { createEmailProvider } from "@/services/notifications/emailProviderFactory";
@@ -40,7 +40,7 @@ function buildEmailHtml(params: {
   const price = product.variants[0]?.price;
   const priceText = price ? `€ ${price}` : "Bekijk prijs in de shop";
 
-  const subject = `${product.title} ${identity.storage} is weer beschikbaar`;
+  const subject = `${product.title}${identity.storage ? ` ${identity.storage}` : ""} is weer beschikbaar`;
 
   const imageBlock = imageUrl
     ? `<img src="${imageUrl}" alt="${product.title}" style="max-width:320px;border-radius:12px;margin:16px 0;" />`
@@ -50,7 +50,7 @@ function buildEmailHtml(params: {
     <div style="font-family:'Poppins',Arial,sans-serif;color:#1f3049;max-width:480px;">
       <h2 style="color:#1f3049;">Goed nieuws — dit toestel is weer op voorraad!</h2>
       <p>Je hebt je aangemeld voor een voorraadmelding voor:</p>
-      <p style="font-size:18px;font-weight:700;">${product.title} ${identity.storage}</p>
+      <p style="font-size:18px;font-weight:700;">${product.title}${identity.storage ? ` ${identity.storage}` : ""}</p>
       ${imageBlock}
       <p><strong>Prijs:</strong> ${priceText}</p>
       <p style="margin-top:24px;">
@@ -66,7 +66,7 @@ function buildEmailHtml(params: {
     </div>
   `;
 
-  const text = `Goed nieuws — ${product.title} ${identity.storage} is weer op voorraad. Prijs: ${priceText}. Bekijk: ${productUrl}`;
+  const text = `Goed nieuws — ${product.title}${identity.storage ? ` ${identity.storage}` : ""} is weer op voorraad. Prijs: ${priceText}. Bekijk: ${productUrl}`;
 
   return { subject, html, text };
 }
@@ -82,7 +82,7 @@ export async function checkProductAndNotify(productId: string): Promise<MatchRes
 
 export async function checkProductObjectAndNotify(product: ShopifyProduct): Promise<MatchResult[]> {
   const results: MatchResult[] = [];
-  const identity = extractProductIdentity(product);
+  const identity = await resolveProductIdentity(product);
 
   if (!identity.productType || !identity.model || !identity.storage) {
     return results;
