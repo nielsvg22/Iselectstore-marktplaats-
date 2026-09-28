@@ -5,10 +5,9 @@
 // Shopify's generic native metafields UI — only our own Admin UI
 // extension surfaces them, filtered per product type.
 
-/** Resolved app-reserved namespace: $app:mkt -> app--{appId}--mkt. Must match
- * the namespace used when creating the metafield definitions (see
- * MARKTPLAATS_INTEGRATION.md) and the Shopify extension's utils.js. */
-const MKT_NAMESPACE = "app--428689915905--mkt";
+import { MKT_NAMESPACE, MetafieldWrite } from "./metafields";
+
+export { MKT_NAMESPACE };
 
 export interface ShopifyImage {
   id: number;
@@ -17,6 +16,7 @@ export interface ShopifyImage {
 }
 
 export interface ShopifyMetafield {
+  id?: number;
   namespace: string;
   key: string;
   // Shopify returns this as a native JSON number/boolean for metafields
@@ -41,6 +41,9 @@ export interface ShopifyProduct {
   product_type: string;
   vendor: string;
   body_html: string | null;
+  handle?: string;
+  status?: string;
+  tags?: string;
   images: ShopifyImage[];
   variants: ShopifyVariant[];
 }
@@ -78,6 +81,24 @@ export async function getProduct(productId: string): Promise<ShopifyProduct> {
   return data.product as ShopifyProduct;
 }
 
+/** Creates a product (used by the Admin UI extension quick-create flow). */
+export async function createProduct(product: Record<string, unknown>): Promise<ShopifyProduct> {
+  const data = await shopifyFetch("/products.json", {
+    method: "POST",
+    body: JSON.stringify({ product }),
+  });
+  return data.product as ShopifyProduct;
+}
+
+/** Partial product update — only the fields present in `product` change. */
+export async function updateProduct(productId: string, product: Record<string, unknown>): Promise<ShopifyProduct> {
+  const data = await shopifyFetch(`/products/${productId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({ product }),
+  });
+  return data.product as ShopifyProduct;
+}
+
 export async function listProducts(limit = 50): Promise<ShopifyProduct[]> {
   const data = await shopifyFetch(`/products.json?limit=${limit}`);
   return data.products as ShopifyProduct[];
@@ -109,6 +130,46 @@ export async function setStructuredField(productId: string, key: string, value: 
     method: "POST",
     body: JSON.stringify({ metafield: { namespace: MKT_NAMESPACE, key, value, type } }),
   });
+}
+
+/**
+ * Upserts a batch of metafields across namespaces (used by the quick-create
+ * flow to write `mkt` + the storefront `custom` mirror in one pass). Reads the
+ * product's metafields once and PUTs existing namespace/key pairs instead of
+ * POSTing duplicates (namespaces without a definition allow duplicates).
+ */
+export async function setProductMetafields(productId: string, writes: MetafieldWrite[]): Promise<void> {
+  if (writes.length === 0) return;
+  const existing = await getAllProductMetafields(productId);
+  const byPair = new Map(existing.map((m) => [`${m.namespace}.${m.key}`, m] as const));
+
+  for (const write of writes) {
+    const current = byPair.get(`${write.namespace}.${write.key}`);
+    if (current?.id) {
+      await shopifyFetch(`/products/${productId}/metafields/${current.id}.json`, {
+        method: "PUT",
+        body: JSON.stringify({
+          metafield: { id: current.id, value: write.value, type: write.type },
+        }),
+      });
+    } else {
+      const res = await shopifyFetch(`/products/${productId}/metafields.json`, {
+        method: "POST",
+        body: JSON.stringify({
+          metafield: {
+            namespace: write.namespace,
+            key: write.key,
+            value: write.value,
+            type: write.type,
+          },
+        }),
+      });
+      const created = (res as { metafield?: { id?: number } }).metafield;
+      if (created?.id) {
+        byPair.set(`${write.namespace}.${write.key}`, { ...write, id: created.id });
+      }
+    }
+  }
 }
 
 /** Uploads a new product image from raw bytes. Never touches existing images — used to add the generated "sold" image alongside the untouched original. */
