@@ -17,6 +17,9 @@ interface RecognizeBody {
   images: { dataUrl: string; filename?: string }[];
   productId?: string;
   testMode?: boolean;
+  /** "create" = herkenning voor een nog niet bestaand product (beheerpagina
+   * /admin/quick-create); standaard "edit" = bestaand product. */
+  mode?: "create" | "edit";
 }
 
 export async function POST(req: NextRequest) {
@@ -27,7 +30,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Ongeldige request body." }, { status: 400 });
   }
 
-  const { productType, images, productId, testMode } = body;
+  const { productType, images, productId, testMode, mode } = body;
+  const createMode = mode === "create";
 
   if (!productType || !listProductTypes().includes(productType as ShopifyProductType)) {
     return NextResponse.json({ error: "Onbekend of ontbrekend producttype." }, { status: 400 });
@@ -48,7 +52,7 @@ export async function POST(req: NextRequest) {
   }
 
   let existingValues: Record<string, string> = {};
-  if (!testMode && productId) {
+  if (!testMode && productId && !createMode) {
     try {
       existingValues = await getStructuredFields(productId);
     } catch {
@@ -65,15 +69,15 @@ export async function POST(req: NextRequest) {
     });
 
     await logSync({
-      shopifyProductId: testMode ? undefined : productId,
+      shopifyProductId: testMode || createMode ? undefined : productId,
       action: testMode ? "ai_recognition_test" : "ai_recognition",
-      message: `productType=${productType} images=${images.length} fields=${result.fields.length}`,
+      message: `productType=${productType} images=${images.length} fields=${result.fields.length} mode=${createMode ? "create" : "edit"}`,
     });
 
     return NextResponse.json({ result, testMode: Boolean(testMode) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "De afbeelding kon niet goed worden gelezen.";
-    await logSync({ shopifyProductId: testMode ? undefined : productId, action: "ai_recognition_error", message });
+    await logSync({ shopifyProductId: testMode || createMode ? undefined : productId, action: "ai_recognition_error", message });
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

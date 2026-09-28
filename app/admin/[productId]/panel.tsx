@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AIRecognitionPanel } from "./AIRecognitionPanel";
+import { AIRecognitionPanel } from "../AIRecognitionPanel";
 
 type CheckStatus = "ok" | "warning" | "error";
 

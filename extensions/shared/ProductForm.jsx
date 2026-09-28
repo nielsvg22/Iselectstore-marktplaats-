@@ -94,6 +94,7 @@ export function ProductForm({
   values,
   issues,
   onChange,
+  aiShortcut,
 }) {
   const template = getTemplate(productType);
   const titles = template ? buildQuickProductTitles(productType, values) : null;
@@ -123,6 +124,8 @@ export function ProductForm({
           </s-option>
         ))}
       </s-select>
+
+      {aiShortcut ?? null}
 
       {onStatusChange ? (
         <s-select

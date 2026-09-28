@@ -7,7 +7,7 @@ import {
   applyTemplateDefaults,
 } from "../../../lib/templates/quickProduct";
 import { ProductForm } from "../../shared/ProductForm.jsx";
-import { callBackend, uploadImages, getIdToken } from "../../shared/api.js";
+import { callBackend, uploadImages, getIdToken, BACKEND_URL } from "../../shared/api.js";
 
 export default async () => {
   render(<QuickCreateAction />, document.body);
@@ -177,6 +177,14 @@ function QuickCreateAction() {
             values={values}
             issues={issues}
             onChange={handleValueChange}
+            aiShortcut={
+              <s-link
+                href={`${BACKEND_URL}/admin/quick-create?productType=${encodeURIComponent(productType)}`}
+                target="_blank"
+              >
+                📷 Haal info op via AI-foto
+              </s-link>
+            }
           />
         )}
 

@@ -13,6 +13,7 @@ export default async function AdminPage() {
       <h1 style={{ fontSize: 22, marginBottom: 4 }}>Marktplaats</h1>
       <p style={{ color: "#6b7280", marginTop: 0 }}>Shopify blijft de source of truth — kies een product om de Marktplaats-mapping te bekijken.</p>
       <div style={{ display: "flex", gap: 16, marginBottom: 16, fontSize: 13 }}>
+        <Link href="/admin/quick-create" style={{ color: "#1f3049" }}>➕ Nieuw product (AI) →</Link>
         <Link href="/admin/sold-images" style={{ color: "#1f3049" }}>⚙️ VERKOCHT-sticker instellingen →</Link>
         <Link href="/admin/inventory" style={{ color: "#1f3049" }}>🔔 Voorraadmeldingen →</Link>
         <Link href="/admin/lifecycle" style={{ color: "#1f3049" }}>📦 28-dagen cleanup →</Link>

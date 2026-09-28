@@ -23,8 +23,42 @@ interface RecognitionResult {
   raw: unknown;
 }
 
+export interface AppliedField {
+  key: string;
+  value: string | number;
+}
+
+interface AIRecognitionPanelProps {
+  productType: string;
+  /** Bestaand product (edit mode): herkende velden worden via /api/ai/apply
+   * weggeschreven naar Shopify. Zonder dit prop werkt de panel in create-mode
+   * voor een nog niet bestaand product. */
+  shopifyProductId?: string;
+  /** Create mode: callback die de herkende velden direct in het openstaande
+   * formulier zet (geen Shopify-write — het product bestaat nog niet).
+   * Optioneel retourneert hij de sleutels die daadwerkelijk zijn toegepast
+   * (formulier kan waarden die niet passen overslaan); anders gelden alle
+   * aangeboden velden als toegepast. */
+  onFieldsApplied?: (fields: AppliedField[]) => void | string[];
+  /** Create mode: pas HIGH/MEDIUM-velden direct toe na herkenning. LOW en
+   * conflicterende velden blijven altijd expliciet aan de gebruiker. */
+  autoApply?: boolean;
+}
+
 const levelLabel: Record<Level, string> = { HIGH: "Hoog", MEDIUM: "Middel", LOW: "Laag" };
 const levelColor: Record<Level, string> = { HIGH: "#16a34a", MEDIUM: "#d97706", LOW: "#dc2626" };
+
+/** Auto-toepassing-regel (create mode): nooit LOW, nooit een onopgelost
+ * conflict tussen foto's — die kiest de gebruiker zelf. */
+export function isAutoApplyEligible(f: RecognizedField): boolean {
+  if (f.level === "LOW") return false;
+  if (f.sourceConflict && f.sourceConflict.length > 1) return false;
+  return true;
+}
+
+export function selectAutoApplyFields(result: Pick<RecognitionResult, "fields">): AppliedField[] {
+  return result.fields.filter(isAutoApplyEligible).map((f) => ({ key: f.key, value: f.value }));
+}
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -35,7 +69,13 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-export function AIRecognitionPanel({ shopifyProductId, productType }: { shopifyProductId: string; productType: string }) {
+export function AIRecognitionPanel({
+  shopifyProductId,
+  productType,
+  onFieldsApplied,
+  autoApply = false,
+}: AIRecognitionPanelProps) {
+  const createMode = typeof onFieldsApplied === "function";
   const [files, setFiles] = useState<File[]>([]);
   const [testMode, setTestMode] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -65,11 +105,21 @@ export function AIRecognitionPanel({ shopifyProductId, productType }: { shopifyP
       const res = await fetch("/api/ai/recognize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productType, productId: shopifyProductId, images, testMode }),
+        body: JSON.stringify(
+          createMode
+            ? { productType, images, mode: "create" }
+            : { productType, productId: shopifyProductId, images, testMode }
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "De AI-service is tijdelijk niet beschikbaar.");
       setResult(data.result);
+      if (createMode && autoApply) {
+        const eligible = selectAutoApplyFields(data.result as RecognitionResult);
+        if (eligible.length > 0) {
+          markApplied(onFieldsApplied!(eligible), eligible);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -77,9 +127,13 @@ export function AIRecognitionPanel({ shopifyProductId, productType }: { shopifyP
     }
   }
 
-  async function applyFields(fieldsToApply: { key: string; value: string | number }[]) {
+  async function applyFields(fieldsToApply: AppliedField[]) {
     if (fieldsToApply.length === 0) return;
     setError(null);
+    if (createMode) {
+      markApplied(onFieldsApplied!(fieldsToApply), fieldsToApply);
+      return;
+    }
     try {
       const res = await fetch("/api/ai/apply", {
         method: "POST",
@@ -94,15 +148,39 @@ export function AIRecognitionPanel({ shopifyProductId, productType }: { shopifyP
     }
   }
 
+  /** Create mode: markeert welke velden echt in het formulier zijn gezet.
+   * Als het formulier waarden heeft overgeslagen (passen niet in het veld)
+   * blijven die als "nog controleren" staan en verschijnt er een waarschuwing. */
+  function markApplied(outcome: void | string[], offered: AppliedField[]) {
+    const keys = Array.isArray(outcome) ? outcome : offered.map((f) => f.key);
+    setAppliedKeys((prev) => new Set([...prev, ...keys]));
+    if (Array.isArray(outcome) && keys.length < offered.length) {
+      setError("Sommige herkende waarden passen niet in het formulier — die velden zijn niet gevuld; controleer ze handmatig.");
+    }
+  }
+
   function resolvedValue(f: RecognizedField): string | number {
     return choices[f.key] ?? f.value;
   }
 
-  function applyAll() {
-    if (!result) return;
-    const eligible = result.fields.filter((f) => f.level !== "LOW" && !appliedKeys.has(f.key));
-    applyFields(eligible.map((f) => ({ key: f.key, value: resolvedValue(f) })));
+  function applyAllCandidates(): RecognizedField[] {
+    if (!result) return [];
+    return result.fields.filter((f) => {
+      if (f.level === "LOW" || appliedKeys.has(f.key)) return false;
+      if (!createMode) return true;
+      const hasConflict = Boolean(f.sourceConflict && f.sourceConflict.length > 1);
+      return !hasConflict || choices[f.key] !== undefined;
+    });
   }
+
+  function applyAll() {
+    applyFields(applyAllCandidates().map((f) => ({ key: f.key, value: resolvedValue(f) })));
+  }
+
+  const pendingCount = result ? result.fields.filter((f) => !appliedKeys.has(f.key)).length : 0;
+  const showApplyAll = createMode
+    ? applyAllCandidates().length > 0
+    : !testMode && Boolean(result && result.fields.some((f) => f.level !== "LOW"));
 
   return (
     <div style={cardStyle()}>
@@ -151,18 +229,29 @@ export function AIRecognitionPanel({ shopifyProductId, productType }: { shopifyP
 
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 10 }}>
         <button onClick={analyze} disabled={loading} style={btnStyle(true)}>
-          {loading ? "Bezig…" : testMode ? "Test AI herkenning" : "Gegevens uit foto halen"}
+          {loading ? "Bezig…" : !createMode && testMode ? "Test AI herkenning" : "Gegevens uit foto halen"}
         </button>
-        <label style={{ fontSize: 13, color: "#6b7280", display: "flex", alignItems: "center", gap: 6 }}>
-          <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} />
-          Testmodus (alleen resultaat tonen, niets opslaan)
-        </label>
+        {!createMode && (
+          <label style={{ fontSize: 13, color: "#6b7280", display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} />
+            Testmodus (alleen resultaat tonen, niets opslaan)
+          </label>
+        )}
       </div>
 
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: 12, color: "#991b1b" }}>{error}</div>}
 
       {result && (
         <div>
+          {createMode && (
+            <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 10 }}>
+              {files.length} foto(&apos;s) geanalyseerd · {result.fields.length} veld/velden herkend ·{" "}
+              <span style={{ color: pendingCount === 0 ? "#16a34a" : "#d97706" }}>
+                {appliedKeys.size} in formulier · {pendingCount} nog controleren
+              </span>
+            </div>
+          )}
+
           {result.warnings.length > 0 && (
             <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 13, color: "#92400e" }}>
               {result.warnings.map((w, i) => (
@@ -180,15 +269,18 @@ export function AIRecognitionPanel({ shopifyProductId, productType }: { shopifyP
                   <div>
                     <div style={{ fontSize: 13, color: "#6b7280" }}>{f.label}</div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: "#1f3049" }}>{String(resolvedValue(f))}</div>
-                    <div style={{ fontSize: 12, color: levelColor[f.level] }}>Zekerheid: {levelLabel[f.level]}</div>
+                    <div style={{ fontSize: 12, color: levelColor[f.level] }}>
+                      Zekerheid: {levelLabel[f.level]}
+                      {createMode && f.level === "LOW" ? " — handmatig controleren" : ""}
+                    </div>
                   </div>
-                  {!testMode && (
+                  {(createMode || !testMode) && (
                     <button
                       onClick={() => applyFields([{ key: f.key, value: resolvedValue(f) }])}
                       disabled={appliedKeys.has(f.key)}
                       style={btnStyle(f.level !== "LOW")}
                     >
-                      {appliedKeys.has(f.key) ? "Toegepast ✓" : "Toepassen"}
+                      {appliedKeys.has(f.key) ? (createMode ? "In formulier ✓" : "Toegepast ✓") : "Toepassen"}
                     </button>
                   )}
                 </div>
@@ -241,7 +333,7 @@ export function AIRecognitionPanel({ shopifyProductId, productType }: { shopifyP
             </details>
           )}
 
-          {!testMode && result.fields.some((f) => f.level !== "LOW") && (
+          {showApplyAll && (
             <div style={{ marginTop: 12 }}>
               <button onClick={applyAll} style={btnStyle(true)}>
                 Alles toepassen
