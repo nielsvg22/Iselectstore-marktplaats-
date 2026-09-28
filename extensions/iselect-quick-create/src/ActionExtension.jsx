@@ -6,8 +6,8 @@ import {
   validateQuickProductData,
   applyTemplateDefaults,
 } from "../../../lib/templates/quickProduct";
-import { ProductForm } from "../../shared/ProductForm";
-import { callBackend, uploadImages } from "../../shared/api";
+import { ProductForm } from "../../shared/ProductForm.jsx";
+import { callBackend, uploadImages } from "../../shared/api.js";
 
 export default async () => {
   render(<QuickCreateAction />, document.body);

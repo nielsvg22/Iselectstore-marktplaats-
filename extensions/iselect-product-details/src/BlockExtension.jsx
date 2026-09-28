@@ -2,8 +2,8 @@ import "@shopify/ui-extensions/preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { validateQuickProductData } from "../../../lib/templates/quickProduct";
-import { ProductForm } from "../../shared/ProductForm";
-import { callBackend, uploadImages, toNumericId } from "../../shared/api";
+import { ProductForm } from "../../shared/ProductForm.jsx";
+import { callBackend, uploadImages, toNumericId } from "../../shared/api.js";
 
 export default async () => {
   render(<ProductEditBlock />, document.body);
