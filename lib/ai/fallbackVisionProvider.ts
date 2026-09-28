@@ -1,27 +1,34 @@
-// Wraps a primary VisionProvider with a fallback: if the primary throws
-// (rate limit, temporary outage, ...), retry once against the fallback
-// before giving up. Keeps the two providers' free-tier hiccups from
-// compounding into "AI service tijdelijk niet beschikbaar" for the user
-// when the other provider would have happily answered.
-import { VisionAnalysisInput, VisionAnalysisResult, VisionProvider, ImageInput } from "./types";
+// Wraps an ordered chain of VisionProviders: tries each in turn and returns
+// the first success. If one throws (rate limit, temporary outage, timeout,
+// server error, ...) the next configured provider is tried before giving up,
+// so one provider's free-tier hiccup doesn't take the whole feature down
+// when another configured provider would have answered fine.
+import { VisionAnalysisInput, VisionAnalysisResult, VisionProvider } from "./types";
 
 export class FallbackVisionProvider implements VisionProvider {
-  constructor(
-    private primary: VisionProvider,
-    private fallback: VisionProvider
-  ) {}
+  private providers: VisionProvider[];
 
-  async analyzeImage(input: VisionAnalysisInput & { images: [ImageInput] }): Promise<VisionAnalysisResult> {
-    try {
-      return await this.primary.analyzeImage(input);
-    } catch (primaryErr) {
-      console.error("FallbackVisionProvider: primary provider failed, retrying with fallback", primaryErr);
+  constructor(providers: VisionProvider[]) {
+    if (providers.length === 0) throw new Error("FallbackVisionProvider heeft minstens één provider nodig.");
+    this.providers = providers;
+  }
+
+  async analyzeImage(input: VisionAnalysisInput): Promise<VisionAnalysisResult> {
+    let lastErr: unknown;
+    for (let i = 0; i < this.providers.length; i++) {
       try {
-        return await this.fallback.analyzeImage(input);
-      } catch (fallbackErr) {
-        console.error("FallbackVisionProvider: fallback provider also failed", fallbackErr);
-        throw fallbackErr;
+        return await this.providers[i].analyzeImage(input);
+      } catch (err) {
+        lastErr = err;
+        const isLast = i === this.providers.length - 1;
+        console.error(
+          isLast
+            ? "FallbackVisionProvider: all providers failed"
+            : `FallbackVisionProvider: provider ${i + 1}/${this.providers.length} failed, trying next`,
+          err
+        );
       }
     }
+    throw lastErr;
   }
 }

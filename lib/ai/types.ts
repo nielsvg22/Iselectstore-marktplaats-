@@ -32,9 +32,12 @@ export interface VisionAnalysisInput {
   fieldLabels: Record<string, string>;
 }
 
-/** Abstraction so the underlying AI/vision vendor can be swapped without touching the service or UI. */
+/** Abstraction so the underlying AI/vision vendor can be swapped without touching the service or UI.
+ * `images` holds every photo for one recognition call (1-5, see MAX_IMAGES_PER_ANALYSIS in
+ * productImageRecognitionService.ts) — a provider combines information across all of them in a
+ * single API call rather than being called once per photo. */
 export interface VisionProvider {
-  analyzeImage(input: VisionAnalysisInput & { images: [ImageInput] }): Promise<VisionAnalysisResult>;
+  analyzeImage(input: VisionAnalysisInput): Promise<VisionAnalysisResult>;
 }
 
 export interface RecognizedField {
@@ -45,6 +48,9 @@ export interface RecognizedField {
   level: ConfidenceLevel;
   existingValue?: string;
   differsFromExisting?: boolean;
+  /** No longer produced: all photos are analyzed together in a single call, so the
+   * provider itself reconciles disagreements between photos. Kept optional so old
+   * UI code that still checks it degrades gracefully instead of breaking. */
   sourceConflict?: { imageIndex: number; filename?: string; value: string | number }[];
 }
 
@@ -53,5 +59,5 @@ export interface RecognitionResult {
   fields: RecognizedField[];
   omittedFields: { key: string; label: string; reason: string }[];
   warnings: string[];
-  raw: { imageIndex: number; result: VisionAnalysisResult }[];
+  raw: VisionAnalysisResult;
 }

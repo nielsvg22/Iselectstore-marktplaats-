@@ -90,9 +90,17 @@ export function AIRecognitionPanel({
   const [choices, setChoices] = useState<Record<string, string | number>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const MAX_FILES = 5;
+
   function addFiles(list: FileList | null) {
     if (!list) return;
-    setFiles((prev) => [...prev, ...Array.from(list).filter((f) => f.type.startsWith("image/"))]);
+    setFiles((prev) => {
+      const combined = [...prev, ...Array.from(list).filter((f) => f.type.startsWith("image/"))];
+      if (combined.length > MAX_FILES) {
+        setError(`Maximaal ${MAX_FILES} foto's per analyse — alleen de eerste ${MAX_FILES} worden gebruikt.`);
+      }
+      return combined.slice(0, MAX_FILES);
+    });
   }
 
   async function analyze() {
@@ -192,7 +200,8 @@ export function AIRecognitionPanel({
     <div style={cardStyle()}>
       <h3 style={{ marginTop: 0 }}>AI Producterkenning</h3>
       <p style={{ fontSize: 13, color: "#6b7280", marginTop: -4 }}>
-        Upload een foto of screenshot (bijv. batterijconditie, &quot;Over deze Mac&quot;) — de AI stelt kenmerken voor, jij bevestigt.
+        Upload tot {MAX_FILES} foto&apos;s van hetzelfde product (bijv. batterijconditie, &quot;Over deze Mac&quot;) — de AI combineert de
+        informatie uit alle foto&apos;s en stelt kenmerken voor, jij bevestigt.
       </p>
 
       <div

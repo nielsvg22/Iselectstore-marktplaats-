@@ -30,11 +30,15 @@ function buildJsonSchema(allowedFieldKeys: string[]) {
   };
 }
 
-function buildPrompt(productType: string, allowedFieldKeys: string[], fieldLabels: Record<string, string>): string {
+function buildPrompt(productType: string, allowedFieldKeys: string[], fieldLabels: Record<string, string>, imageCount: number): string {
   const fieldList = allowedFieldKeys.map((k) => `- ${k} (${fieldLabels[k] ?? k})`).join("\n");
-  return `Je analyseert een foto of screenshot van een tweedehands Apple-product (type: ${productType}) om productkenmerken te herkennen voor een webshop.
+  const multiPhotoNote =
+    imageCount > 1
+      ? `Je krijgt ${imageCount} foto's van HETZELFDE fysieke product. Combineer de informatie uit alle foto's samen tot één antwoord per veld. Als foto's elkaar tegenspreken over hetzelfde veld, kies de meest betrouwbare/duidelijke leesbare waarde en verlaag de confidence voor dat veld.\n\n`
+      : "";
+  return `Je analyseert ${imageCount > 1 ? "foto's of screenshots" : "een foto of screenshot"} van een tweedehands Apple-product (type: ${productType}) om productkenmerken te herkennen voor een webshop.
 
-Herken UITSLUITEND deze velden, als en alleen als ze duidelijk leesbaar op de afbeelding staan:
+${multiPhotoNote}Herken UITSLUITEND deze velden, als en alleen als ze duidelijk leesbaar op de afbeelding(en) staan:
 ${fieldList}
 
 Regels:
@@ -53,9 +57,8 @@ export class OpenAiVisionProvider implements VisionProvider {
     this.model = model;
   }
 
-  async analyzeImage(input: VisionAnalysisInput & { images: [ImageInput] }): Promise<VisionAnalysisResult> {
+  async analyzeImage(input: VisionAnalysisInput): Promise<VisionAnalysisResult> {
     const { images, productType, allowedFieldKeys, fieldLabels } = input;
-    const image = images[0];
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -69,8 +72,8 @@ export class OpenAiVisionProvider implements VisionProvider {
           {
             role: "user",
             content: [
-              { type: "text", text: buildPrompt(productType, allowedFieldKeys, fieldLabels) },
-              { type: "image_url", image_url: { url: image.dataUrl } },
+              { type: "text", text: buildPrompt(productType, allowedFieldKeys, fieldLabels, images.length) },
+              ...images.map((image: ImageInput) => ({ type: "image_url", image_url: { url: image.dataUrl } })),
             ],
           },
         ],

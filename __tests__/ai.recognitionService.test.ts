@@ -1,14 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { ProductImageRecognitionService } from "../lib/ai/productImageRecognitionService";
+import { describe, it, expect, vi } from "vitest";
+import { ProductImageRecognitionService, MAX_IMAGES_PER_ANALYSIS } from "../lib/ai/productImageRecognitionService";
 import type { VisionAnalysisInput, VisionAnalysisResult, VisionProvider, ImageInput } from "../lib/ai/types";
 
 function fakeImage(tag: string): ImageInput {
   return { dataUrl: `data:image/png;base64,${tag}`, filename: `${tag}.png` };
 }
 
+// Scripts a single combined result keyed by the filename of the FIRST image —
+// matches the new one-call-per-analysis behavior (all photos sent together).
 class ScriptedProvider implements VisionProvider {
   constructor(private script: Record<string, VisionAnalysisResult>) {}
-  async analyzeImage(input: VisionAnalysisInput & { images: [ImageInput] }): Promise<VisionAnalysisResult> {
+  async analyzeImage(input: VisionAnalysisInput): Promise<VisionAnalysisResult> {
     const tag = input.images[0].filename?.replace(".png", "") ?? "";
     return this.script[tag] ?? { fields: {}, warnings: [] };
   }
@@ -125,17 +127,30 @@ describe("ProductImageRecognitionService", () => {
     expect(result.omittedFields.map((o) => o.key)).toEqual(expect.arrayContaining(["storage_gb", "color"]));
   });
 
-  it("flags a conflict when two photos disagree on the same field", async () => {
-    const provider = new ScriptedProvider({
-      photo1: { fields: { storage_gb: { value: "256 GB", confidence: 0.9 } }, warnings: [] },
-      photo2: { fields: { storage_gb: { value: "512 GB", confidence: 0.92 } }, warnings: [] },
+  it("sends all photos of the same product to the provider in a single combined call", async () => {
+    const analyzeImage = vi.fn().mockResolvedValue({
+      fields: { storage_gb: { value: "512 GB", confidence: 0.92 } },
+      warnings: [],
     });
+    const provider: VisionProvider = { analyzeImage };
     const service = new ProductImageRecognitionService(provider);
     const result = await service.recognize({ productType: "iPhone", images: [fakeImage("photo1"), fakeImage("photo2")] });
 
-    const storage = result.fields.find((f) => f.key === "storage_gb");
-    expect(storage?.sourceConflict).toBeDefined();
-    expect(storage?.sourceConflict?.length).toBe(2);
+    expect(analyzeImage).toHaveBeenCalledTimes(1);
+    expect(analyzeImage.mock.calls[0][0].images).toHaveLength(2);
+    expect(result.fields.find((f) => f.key === "storage_gb")?.value).toBe("512GB");
+  });
+
+  it("caps a request at the maximum number of images and warns about the rest", async () => {
+    const analyzeImage = vi.fn().mockResolvedValue({ fields: {}, warnings: [] });
+    const provider: VisionProvider = { analyzeImage };
+    const service = new ProductImageRecognitionService(provider);
+    const images = Array.from({ length: MAX_IMAGES_PER_ANALYSIS + 2 }, (_, i) => fakeImage(`photo${i}`));
+
+    const result = await service.recognize({ productType: "iPhone", images });
+
+    expect(analyzeImage.mock.calls[0][0].images).toHaveLength(MAX_IMAGES_PER_ANALYSIS);
+    expect(result.warnings.some((w) => w.includes(String(MAX_IMAGES_PER_ANALYSIS)))).toBe(true);
   });
 
   it("marks a field as differing from the existing Shopify value without overwriting it", async () => {

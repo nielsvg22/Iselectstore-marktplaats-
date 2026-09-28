@@ -12,6 +12,12 @@ import type { ImageInput, RecognitionResult, RecognizedField, VisionProvider } f
 
 const MIN_CONFIDENCE_TO_SHOW = 0.3;
 
+// All photos are assumed to be of the same physical product and are sent to
+// the vision provider together in a single call, so it can combine
+// information across them itself (a battery screenshot plus an "About this
+// Mac" screenshot, say) instead of the app reconciling per-photo answers.
+export const MAX_IMAGES_PER_ANALYSIS = 5;
+
 export class ProductImageRecognitionService {
   constructor(private provider: VisionProvider) {}
 
@@ -20,45 +26,37 @@ export class ProductImageRecognitionService {
     images: ImageInput[];
     existingValues?: Record<string, string>;
   }): Promise<RecognitionResult> {
-    const { productType, images, existingValues = {} } = params;
+    const { productType, existingValues = {} } = params;
 
     const allowedFieldKeys = ALLOWED_AI_FIELDS[productType];
     if (!allowedFieldKeys || allowedFieldKeys.length === 0) {
       throw new Error(`Geen AI-herkenning beschikbaar voor producttype "${productType}".`);
     }
-    if (images.length === 0) {
+    if (params.images.length === 0) {
       throw new Error("Geen afbeelding ontvangen.");
+    }
+
+    const images = params.images.slice(0, MAX_IMAGES_PER_ANALYSIS);
+    const warnings: string[] = [];
+    if (params.images.length > MAX_IMAGES_PER_ANALYSIS) {
+      warnings.push(`Alleen de eerste ${MAX_IMAGES_PER_ANALYSIS} foto's zijn geanalyseerd (maximum per analyse).`);
     }
 
     const fieldLabels: Record<string, string> = {};
     for (const key of allowedFieldKeys) fieldLabels[key] = FIELD_LIBRARY[key]?.label ?? key;
 
-    const raw: RecognitionResult["raw"] = [];
-    const warnings: string[] = [];
-
-    // Per-image analysis, not a single multi-image call: keeps conflict
-    // detection deterministic and independently testable, rather than
-    // trusting the model to reconcile disagreements itself.
-    for (let i = 0; i < images.length; i++) {
-      let result;
-      try {
-        result = await this.provider.analyzeImage({
-          images: [images[i]],
-          productType,
-          allowedFieldKeys,
-          fieldLabels,
-        });
-      } catch (err) {
-        // Log the real provider error server-side (status codes, rate limits,
-        // ...) but never leak provider internals to the client response.
-        console.error("ProductImageRecognitionService: provider error", err);
-        throw new Error("De AI-service is tijdelijk niet beschikbaar.");
-      }
-      raw.push({ imageIndex: i, result });
-      warnings.push(...result.warnings.map((w) => (images.length > 1 ? `Foto ${i + 1}: ${w}` : w)));
+    let raw;
+    try {
+      raw = await this.provider.analyzeImage({ images, productType, allowedFieldKeys, fieldLabels });
+    } catch (err) {
+      // Log the real provider error server-side (status codes, rate limits,
+      // ...) but never leak provider internals to the client response.
+      console.error("ProductImageRecognitionService: provider error", err);
+      throw new Error("De AI-service is tijdelijk niet beschikbaar.");
     }
+    warnings.push(...raw.warnings);
 
-    if (raw.every((r) => Object.keys(r.result.fields).length === 0)) {
+    if (Object.keys(raw.fields).length === 0) {
       warnings.push("Er is geen productinformatie gevonden op de geüploade foto('s).");
     }
 
@@ -66,40 +64,27 @@ export class ProductImageRecognitionService {
     const omittedFields: RecognitionResult["omittedFields"] = [];
 
     for (const key of allowedFieldKeys) {
-      // Collect every image's answer for this field, normalizing as we go.
-      const perImage: { imageIndex: number; filename?: string; value: string | number; confidence: number }[] = [];
-      for (const { imageIndex, result } of raw) {
-        const f = result.fields[key];
-        if (!f || f.value === null || f.value === undefined) continue;
-        if (f.confidence < MIN_CONFIDENCE_TO_SHOW) continue;
-        const normalized = normalizeField(key, f.value);
-        if (normalized === null) continue;
-        perImage.push({ imageIndex, filename: images[imageIndex].filename, value: normalized, confidence: f.confidence });
+      const f = raw.fields[key];
+      if (!f || f.value === null || f.value === undefined || f.confidence < MIN_CONFIDENCE_TO_SHOW) {
+        omittedFields.push({ key, label: fieldLabels[key], reason: "Niet gevonden of te onzeker op de foto('s)." });
+        continue;
       }
-
-      if (perImage.length === 0) {
+      const normalized = normalizeField(key, f.value);
+      if (normalized === null) {
         omittedFields.push({ key, label: fieldLabels[key], reason: "Niet gevonden of te onzeker op de foto('s)." });
         continue;
       }
 
-      // Conflict: two images disagree on the normalized value.
-      const distinctValues = new Set(perImage.map((p) => String(p.value)));
-      const best = perImage.reduce((a, b) => (b.confidence > a.confidence ? b : a));
-
       const recognized: RecognizedField = {
         key,
         label: fieldLabels[key],
-        value: best.value,
-        confidence: best.confidence,
-        level: confidenceLevel(best.confidence),
+        value: normalized,
+        confidence: f.confidence,
+        level: confidenceLevel(f.confidence),
       };
 
-      if (distinctValues.size > 1) {
-        recognized.sourceConflict = perImage.map((p) => ({ imageIndex: p.imageIndex, filename: p.filename, value: p.value }));
-      }
-
       const existing = existingValues[key];
-      if (existing !== undefined && existing !== "" && String(existing) !== String(best.value)) {
+      if (existing !== undefined && existing !== "" && String(existing) !== String(normalized)) {
         recognized.existingValue = existing;
         recognized.differsFromExisting = true;
       }

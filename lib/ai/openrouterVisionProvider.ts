@@ -1,17 +1,14 @@
-// Groq Vision implementation of VisionProvider — default provider because
-// Groq offers a free/cheap tier, useful while this feature is still being
-// validated. Server-side only; GROQ_API_KEY never reaches the client.
-// Groq's API is OpenAI-compatible (chat completions + response_format).
-// Docs: https://console.groq.com/docs/vision (model lineup changes — check
-// there if GROQ_MODEL needs updating).
+// OpenRouter implementation of VisionProvider — used as an extra fallback
+// alongside Gemini/Groq: when both of those hit a rate limit, are
+// overloaded, or time out, OpenRouter's free-tier vision models are tried
+// next before giving up. OpenAI-compatible chat completions API. Server-side
+// only; OPENROUTER_API_KEY never reaches the client.
+// Docs: https://openrouter.ai/docs — free vision-capable models rotate over
+// time (":free" suffix), check https://openrouter.ai/models?fmt=cards&supported_parameters=image
+// if OPENROUTER_MODEL starts returning 404/"model not found".
 import { VisionAnalysisInput, VisionAnalysisResult, VisionProvider, ImageInput } from "./types";
 
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-
-// Groq's vision API rejects more than 3 images in a single request — see
-// https://console.groq.com/docs/vision — so only the first 3 of a
-// multi-photo analysis are sent here even though the app allows up to 5.
-const GROQ_MAX_IMAGES = 3;
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 function buildPrompt(productType: string, allowedFieldKeys: string[], fieldLabels: Record<string, string>, imageCount: number): string {
   const fieldList = allowedFieldKeys.map((k) => `- ${k} (${fieldLabels[k] ?? k})`).join("\n");
@@ -30,31 +27,39 @@ Regels:
 - Geef een confidence tussen 0 en 1 die je eigen zekerheid weerspiegelt over de leesbaarheid, niet een schatting van hoe waarschijnlijk de waarde is.
 - Geef waarden zoals ze letterlijk op het scherm staan (bijv. "512 GB", "94%", "M3 Pro") — normalisatie gebeurt daarna door de applicatie, niet door jou.
 
-Antwoord ALLEEN met geldige JSON in exact deze vorm (laat velden die je niet ziet gewoon weg):
+Antwoord ALLEEN met geldige JSON, zonder markdown-codeblok, in exact deze vorm (laat velden die je niet ziet gewoon weg):
 {
 ${shape},
   "warnings": [<string>]
 }`;
 }
 
-export class GroqVisionProvider implements VisionProvider {
+/** Some free OpenRouter models wrap JSON in a ```json fence despite instructions not to. */
+function stripCodeFence(text: string): string {
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  return match ? match[1] : text;
+}
+
+export class OpenRouterVisionProvider implements VisionProvider {
   private apiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model = "qwen/qwen3.8-27b") {
+  constructor(apiKey: string, model = "meta-llama/llama-3.2-11b-vision-instruct:free") {
     this.apiKey = apiKey;
     this.model = model;
   }
 
   async analyzeImage(input: VisionAnalysisInput): Promise<VisionAnalysisResult> {
-    const { productType, allowedFieldKeys, fieldLabels } = input;
-    const images = input.images.slice(0, GROQ_MAX_IMAGES);
+    const { images, productType, allowedFieldKeys, fieldLabels } = input;
 
-    const res = await fetch(GROQ_API_URL, {
+    const res = await fetch(OPENROUTER_API_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
+        // Recommended by OpenRouter to identify the calling app; not secret.
+        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://iselectstore-marktplaats-app.vercel.app",
+        "X-Title": "iSelectStore Marktplaats-integratie",
       },
       body: JSON.stringify({
         model: this.model,
@@ -69,26 +74,24 @@ export class GroqVisionProvider implements VisionProvider {
         ],
         response_format: { type: "json_object" },
         temperature: 0,
-        // Groq's free tier has a small output-tokens-per-minute budget; cap
-        // the response so one recognition call doesn't burn most of it.
-        max_tokens: 400,
+        max_tokens: 500,
       }),
     });
 
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Groq Vision-aanroep mislukt (${res.status}): ${body.slice(0, 500)}`);
+      throw new Error(`OpenRouter Vision-aanroep mislukt (${res.status}): ${body.slice(0, 500)}`);
     }
 
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
-    if (!content) throw new Error("Groq gaf geen structured output terug.");
+    if (!content) throw new Error("OpenRouter gaf geen structured output terug.");
 
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(content);
+      parsed = JSON.parse(stripCodeFence(content));
     } catch {
-      throw new Error("Groq-response kon niet als JSON worden geparsed.");
+      throw new Error("OpenRouter-response kon niet als JSON worden geparsed.");
     }
 
     const fields: VisionAnalysisResult["fields"] = {};

@@ -1,9 +1,11 @@
-// Single place that decides which VisionProvider implementation to use.
-// Swapping providers is an env var change, never a code change elsewhere.
+// Single place that decides which VisionProvider implementation(s) to use.
+// Swapping/adding providers is an env var change, never a code change
+// elsewhere.
 import { VisionProvider } from "./types";
 import { GroqVisionProvider } from "./groqVisionProvider";
 import { OpenAiVisionProvider } from "./openaiVisionProvider";
 import { GeminiVisionProvider } from "./geminiVisionProvider";
+import { OpenRouterVisionProvider } from "./openrouterVisionProvider";
 import { FallbackVisionProvider } from "./fallbackVisionProvider";
 
 function buildProvider(name: string): VisionProvider | null {
@@ -23,6 +25,11 @@ function buildProvider(name: string): VisionProvider | null {
       if (!apiKey) return null;
       return new OpenAiVisionProvider(apiKey, process.env.AI_MODEL || "gpt-4o");
     }
+    case "openrouter": {
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) return null;
+      return new OpenRouterVisionProvider(apiKey, process.env.OPENROUTER_MODEL || "meta-llama/llama-3.2-11b-vision-instruct:free");
+    }
     default:
       throw new Error(`Onbekende AI_PROVIDER: ${name}`);
   }
@@ -31,18 +38,22 @@ function buildProvider(name: string): VisionProvider | null {
 export function createVisionProviderFromEnv(): VisionProvider | null {
   // Gemini is the default: its free tier's rate limits are far more
   // forgiving than Groq's for normal day-to-day testing/use.
-  const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
-  const primary = buildProvider(provider);
+  const primaryName = (process.env.AI_PROVIDER || "gemini").toLowerCase();
+  const primary = buildProvider(primaryName);
   if (!primary) return null;
 
-  // If Groq is configured as well and isn't already the primary, use it as
-  // an automatic fallback: a temporary outage or rate limit on one free
-  // tier no longer surfaces as "AI-service tijdelijk niet beschikbaar" as
-  // long as the other one is up.
-  if (provider !== "groq" && process.env.GROQ_API_KEY) {
-    const fallback = buildProvider("groq");
-    if (fallback) return new FallbackVisionProvider(primary, fallback);
+  // Automatic fallback chain: if a fallback provider is configured (and
+  // isn't already the primary), it's tried next when the primary hits a
+  // rate limit, temporary outage, timeout or server error — so one free
+  // tier's hiccup no longer surfaces as "AI-service tijdelijk niet
+  // beschikbaar" while another configured provider is available. Groq comes
+  // before OpenRouter since it was already the established secondary.
+  const chain: VisionProvider[] = [primary];
+  for (const name of ["groq", "openrouter"]) {
+    if (name === primaryName) continue;
+    const provider = buildProvider(name);
+    if (provider) chain.push(provider);
   }
 
-  return primary;
+  return chain.length > 1 ? new FallbackVisionProvider(chain) : primary;
 }
