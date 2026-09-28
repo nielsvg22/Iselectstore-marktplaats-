@@ -107,6 +107,19 @@ describe("POST /api/shopify/quick-create — endpoint tests (Test A)", () => {
     expect(res.headers.get("access-control-allow-headers")).toContain("Authorization");
   });
 
+  it("answers preflight for the extension host origin (extensions.shopifycdn.com)", async () => {
+    const res = await OPTIONS(
+      new Request("https://x/api/shopify/quick-create", {
+        method: "OPTIONS",
+        headers: { Origin: "https://extensions.shopifycdn.com" },
+      }) as never
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe(
+      "https://extensions.shopifycdn.com"
+    );
+  });
+
   it("does not grant CORS to foreign origins", async () => {
     const res = await OPTIONS(
       new Request("https://x/api/shopify/quick-create", { method: "OPTIONS", headers: { Origin: "https://evil.example.com" } }) as never

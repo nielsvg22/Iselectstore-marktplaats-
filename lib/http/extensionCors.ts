@@ -1,12 +1,13 @@
-// CORS for the Admin UI extension endpoints. The extension runs inside
-// Shopify admin iframes, so requests are cross-origin and preflighted
-// (Authorization: Bearer <id-token> triggers OPTIONS). Origins are matched
-// against the app/store plus the Shopify domains admin extensions render on;
-// everything else gets no CORS header and is blocked by the browser.
+// CORS for the Admin UI extension endpoints. Admin UI extensions are hosted
+// on https://extensions.shopifycdn.com (per shopify.dev docs), so requests
+// are cross-origin and preflighted (Authorization: Bearer <id-token>
+// triggers OPTIONS). Origins are matched against the app/store plus the
+// Shopify domains admin extensions render on; everything else gets no CORS
+// header and is blocked by the browser.
 import { NextRequest, NextResponse } from "next/server";
 
 const SHOPIFY_ORIGIN_RE =
-  /^https:\/\/([a-z0-9-]+\.)(myshopify\.com|shopify\.com|shopifycloud\.com|shopifydev\.com)$/i;
+  /^https:\/\/([a-z0-9-]+\.)*(myshopify\.com|shopify\.com|shopifycloud\.com|shopifydev\.com|shopifycdn\.com)$/i;
 
 function normalizeOrigin(value: string): string {
   return value.trim().replace(/\/$/, "");
