@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS sold_image_settings (
   delay_hours INTEGER NOT NULL DEFAULT 0,
   sticker_text VARCHAR(255) NOT NULL DEFAULT 'VERKOCHT',
   position VARCHAR(50) NOT NULL DEFAULT 'center',
+  style VARCHAR(20) NOT NULL DEFAULT 'pill',
   size_percent INTEGER NOT NULL DEFAULT 60,
   opacity NUMERIC(3,2) NOT NULL DEFAULT 0.85,
   band_color_hex VARCHAR(7) NOT NULL DEFAULT '#dc2626',
@@ -106,8 +107,8 @@ CREATE TABLE IF NOT EXISTS sold_image_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO sold_image_settings (id, mode, delay_hours, sticker_text, position, size_percent, opacity, band_color_hex, text_color_hex)
-VALUES (1, 'auto', 0, 'VERKOCHT', 'center', 60, 0.85, '#dc2626', '#ffffff')
+INSERT INTO sold_image_settings (id, mode, delay_hours, sticker_text, position, style, size_percent, opacity, band_color_hex, text_color_hex)
+VALUES (1, 'auto', 0, 'VERKOCHT', 'center', 'pill', 60, 0.85, '#dc2626', '#ffffff')
 ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS sold_image_state (

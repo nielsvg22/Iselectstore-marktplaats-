@@ -1,4 +1,8 @@
 export type StickerPosition = "center" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
+/** "pill" only applies to a corner position — a compact rounded badge sized to the text, matching
+ * the site's other product badges. "ribbon" is the original diagonal full-corner banner. Center
+ * position always renders as a rounded band regardless of this setting. */
+export type StickerStyle = "pill" | "ribbon";
 export type SoldImageMode = "none" | "auto";
 export type SoldImageStatus = "none" | "pending" | "applied" | "restoring" | "restored" | "error";
 
@@ -8,7 +12,8 @@ export interface SoldImageSettings {
   delayHours: number;
   stickerText: string;
   position: StickerPosition;
-  /** Sticker band width as a percentage of the image width. */
+  style: StickerStyle;
+  /** Sticker band width as a percentage of the image width (ribbon/center) — ignored by the pill style, which sizes itself to the text. */
   sizePercent: number;
   /** 0-1 */
   opacity: number;

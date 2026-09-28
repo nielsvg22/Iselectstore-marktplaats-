@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
   if (body.position && !["center", "top-left", "top-right", "bottom-left", "bottom-right"].includes(body.position)) {
     return NextResponse.json({ error: "Ongeldige positie." }, { status: 400 });
   }
+  if (body.style && !["pill", "ribbon"].includes(body.style)) {
+    return NextResponse.json({ error: "Ongeldige stijl." }, { status: 400 });
+  }
 
   const settings = await updateSoldImageSettings(body);
   return NextResponse.json({ settings });

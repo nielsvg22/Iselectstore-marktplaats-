@@ -88,6 +88,41 @@ function drawCornerRibbon(
   ctx.restore();
 }
 
+/** Draws a compact rounded pill sized to the text, matching the site's other product badges
+ * (solid fill, bold white text, no rotation) instead of a diagonal ribbon. */
+function drawCornerPill(
+  ctx: import("@napi-rs/canvas").SKRSContext2D,
+  width: number,
+  height: number,
+  settings: SoldImageSettings,
+  corner: "top-left" | "top-right" | "bottom-left" | "bottom-right"
+) {
+  const margin = width * 0.04;
+  const fontSize = Math.max(12, width * 0.032 * (settings.sizePercent / 60));
+  ctx.font = `${fontSize}px "${FONT_FAMILY}"`;
+  const textWidth = ctx.measureText(settings.stickerText).width;
+
+  const paddingX = fontSize * 0.9;
+  const paddingY = fontSize * 0.55;
+  const pillWidth = textWidth + paddingX * 2;
+  const pillHeight = fontSize + paddingY * 2;
+  const radius = pillHeight / 2;
+
+  const isTop = corner.startsWith("top");
+  const isLeft = corner.endsWith("left");
+  const x = isLeft ? margin : width - margin - pillWidth;
+  const y = isTop ? margin : height - margin - pillHeight;
+
+  ctx.fillStyle = hexToRgba(settings.bandColorHex, settings.opacity);
+  roundedRect(ctx, x, y, pillWidth, pillHeight, radius);
+  ctx.fill();
+
+  ctx.fillStyle = settings.textColorHex;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(settings.stickerText, x + pillWidth / 2, y + pillHeight / 2 + fontSize * 0.05);
+}
+
 function roundedRect(ctx: import("@napi-rs/canvas").SKRSContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -111,6 +146,8 @@ export async function applySoldOverlay(imageBuffer: Buffer, settings: SoldImageS
 
   if (settings.position === "center") {
     drawCenterBand(ctx, width, height, settings);
+  } else if (settings.style === "pill") {
+    drawCornerPill(ctx, width, height, settings, settings.position);
   } else {
     drawCornerRibbon(ctx, width, height, settings, settings.position);
   }

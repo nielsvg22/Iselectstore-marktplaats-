@@ -7,6 +7,7 @@ interface Settings {
   delayHours: number;
   stickerText: string;
   position: "center" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  style: "pill" | "ribbon";
   sizePercent: number;
   opacity: number;
   bandColorHex: string;
@@ -19,6 +20,11 @@ const positionLabels: Record<Settings["position"], string> = {
   "top-right": "Rechtsboven",
   "bottom-left": "Linksonder",
   "bottom-right": "Rechtsonder",
+};
+
+const styleLabels: Record<Settings["style"], string> = {
+  pill: "Badge (compacte ronde pil, zoals de andere productlabels)",
+  ribbon: "Lint (diagonale banner over de hoek)",
 };
 
 export function SoldImageSettingsForm({ initial }: { initial: Settings }) {
@@ -113,6 +119,19 @@ export function SoldImageSettingsForm({ initial }: { initial: Settings }) {
               </option>
             ))}
           </select>
+
+          {settings.position !== "center" && (
+            <>
+              <label style={labelStyle()}>Vorm</label>
+              <select value={settings.style} onChange={(e) => setSettings((s) => ({ ...s, style: e.target.value as Settings["style"] }))} style={inputStyle()}>
+                {Object.entries(styleLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
 
           <label style={labelStyle()}>Grootte ({settings.sizePercent}% van de fotobreedte)</label>
           <input

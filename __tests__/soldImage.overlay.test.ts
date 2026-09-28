@@ -8,6 +8,7 @@ const settings: SoldImageSettings = {
   delayHours: 0,
   stickerText: "VERKOCHT",
   position: "center",
+  style: "pill",
   sizePercent: 60,
   opacity: 0.85,
   bandColorHex: "#dc2626",
@@ -44,6 +45,20 @@ describe("applySoldOverlay", () => {
     for (const position of positions) {
       await expect(applySoldOverlay(input, { ...settings, position })).resolves.toBeInstanceOf(Buffer);
     }
+  });
+
+  it("works for both corner styles (pill and ribbon) without throwing", async () => {
+    const input = samplePng(400, 300);
+    for (const style of ["pill", "ribbon"] as const) {
+      await expect(applySoldOverlay(input, { ...settings, position: "top-left", style })).resolves.toBeInstanceOf(Buffer);
+    }
+  });
+
+  it("renders a visibly different result for the pill style vs. the ribbon style", async () => {
+    const input = samplePng(400, 300);
+    const pill = await applySoldOverlay(input, { ...settings, position: "top-left", style: "pill" });
+    const ribbon = await applySoldOverlay(input, { ...settings, position: "top-left", style: "ribbon" });
+    expect(pill.equals(ribbon)).toBe(false);
   });
 
   it("respects a custom sticker text", async () => {

@@ -71,9 +71,11 @@ uur later. Wil je fijnmazigere vertraging, is een Vercel Pro-abonnement
 
 - **Na verkoop**: niets doen, of automatisch sticker toevoegen.
 - **Vertraging**: 0 (direct, binnen één cron-cyclus) of X uur.
-- **Sticker-stijl**: tekst, positie (midden/4 hoeken), grootte (% van
-  fotobreedte), transparantie, bandkleur, tekstkleur — huisstijlkleur is dus
-  nu al instelbaar, geen aparte functie later nodig.
+- **Sticker-stijl**: tekst, positie (midden/4 hoeken), vorm bij een hoekpositie
+  (`pill` — compacte ronde badge, standaard, in lijn met de andere
+  productlabels op de site — of `ribbon` — de originele diagonale banner),
+  grootte (% van fotobreedte), transparantie, bandkleur, tekstkleur —
+  huisstijlkleur is dus nu al instelbaar, geen aparte functie later nodig.
 
 ## Logging
 
