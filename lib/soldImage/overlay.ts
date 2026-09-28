@@ -62,15 +62,32 @@ function drawCornerRibbon(
   const ribbonLength = Math.hypot(width, height) * (settings.sizePercent / 100) * 0.55;
   const ribbonHeight = ribbonLength * 0.19;
   const fontSize = ribbonHeight * 0.5;
+  ctx.font = `${fontSize}px "${FONT_FAMILY}"`;
+  const textWidth = ctx.measureText(settings.stickerText).width;
 
   const isTop = corner.startsWith("top");
   const isLeft = corner.endsWith("left");
-  // Pivot near the chosen corner; rotation direction mirrors for each corner
-  // so the ribbon always reads left-to-right and slopes away from the edge.
-  // Far enough inset that the full text clears the canvas edge once rotated.
-  const pivotX = isLeft ? width * 0.16 : width * 0.84;
-  const pivotY = isTop ? height * 0.16 : height * 0.84;
   const angle = isTop === isLeft ? -Math.PI / 4 : Math.PI / 4;
+
+  // Pivot placed along the corner's 45° bisector so the band sits as close
+  // to the true image corner as possible — ideally flush (0 gap), which
+  // happens at an inset of exactly ribbonHeight/2 * cos(45°). But the band
+  // is only as tall as ribbonHeight while the text is much wider, so at
+  // that exact distance the far end of the text would be clipped by the
+  // adjacent edge (rotating a wide string that close to a corner swings one
+  // end off-canvas). Use whichever inset is larger: the minimum needed for
+  // the text to fully clear both edges, or the exact-corner-touch distance.
+  // A small residual gap only appears for very long custom sticker text.
+  const cornerTouchInset = (ribbonHeight / 2) * Math.SQRT1_2;
+  const textClearanceInset = (textWidth / 2 / Math.SQRT2) * 1.15;
+  const inset = Math.max(cornerTouchInset, textClearanceInset);
+
+  const cornerX = isLeft ? 0 : width;
+  const cornerY = isTop ? 0 : height;
+  const signX = isLeft ? 1 : -1;
+  const signY = isTop ? 1 : -1;
+  const pivotX = cornerX + signX * inset;
+  const pivotY = cornerY + signY * inset;
 
   ctx.save();
   ctx.translate(pivotX, pivotY);

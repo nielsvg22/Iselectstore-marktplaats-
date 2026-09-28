@@ -9,7 +9,7 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
-const SCOPES = "read_content,read_products,write_content,write_products,read_inventory";
+const SCOPES = "read_content,read_products,write_content,write_products,read_inventory,read_themes,write_themes";
 
 export async function GET(req: NextRequest) {
   const shop = req.nextUrl.searchParams.get("shop");
