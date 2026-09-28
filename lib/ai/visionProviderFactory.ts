@@ -3,11 +3,19 @@
 import { VisionProvider } from "./types";
 import { GroqVisionProvider } from "./groqVisionProvider";
 import { OpenAiVisionProvider } from "./openaiVisionProvider";
+import { GeminiVisionProvider } from "./geminiVisionProvider";
 
 export function createVisionProviderFromEnv(): VisionProvider | null {
-  const provider = (process.env.AI_PROVIDER || "groq").toLowerCase();
+  // Gemini is the default: its free tier's rate limits are far more
+  // forgiving than Groq's for normal day-to-day testing/use.
+  const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 
   switch (provider) {
+    case "gemini": {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return null;
+      return new GeminiVisionProvider(apiKey, process.env.GEMINI_MODEL || "gemini-3.8-flash");
+    }
     case "groq": {
       const apiKey = process.env.GROQ_API_KEY;
       if (!apiKey) return null;

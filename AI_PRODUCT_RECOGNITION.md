@@ -15,7 +15,7 @@ Marktplaats-adminpaneel (app/admin/[productId])
   → AIRecognitionPanel.tsx (foto-upload, resultaat-UI)
   → POST /api/ai/recognize          (server-side, leest bestaande Shopify-waarden ter vergelijking)
       → ProductImageRecognitionService (lib/ai/productImageRecognitionService.ts)
-          → VisionProvider (lib/ai/openaiVisionProvider.ts — OpenAI Vision, structured output)
+          → VisionProvider (lib/ai/geminiVisionProvider.ts — Google Gemini, structured output)
       ← genormaliseerde velden + confidence + conflicten
   → gebruiker bevestigt per veld of "Alles toepassen"
   → POST /api/ai/apply               (schrijft pas dan naar Shopify structured fields)
@@ -31,11 +31,17 @@ Shopify-structured-fields (`$app:mkt`-namespace) als de extensie.
 ## Provider
 
 `VisionProvider`-interface (`lib/ai/types.ts`) — makkelijk te vervangen, kies
-via `AI_PROVIDER` in `lib/ai/visionProviderFactory.ts`. Twee implementaties:
+via `AI_PROVIDER` in `lib/ai/visionProviderFactory.ts`. Drie implementaties:
 
-- **Groq** (`lib/ai/groqVisionProvider.ts`) — **standaard provider**, gekozen
-  omdat Groq een goedkope/gratis testlaag biedt terwijl deze functie nog
-  gevalideerd wordt. OpenAI-compatibele Chat Completions API met
+- **Gemini** (`lib/ai/geminiVisionProvider.ts`) — **standaard provider**.
+  Google's gratis laag heeft een veel ruimer quotum dan Groq's gratis laag,
+  wat in de praktijk minder snel "AI-service tijdelijk niet beschikbaar"
+  gaf tijdens normaal testen/gebruik. `generateContent`-API met
+  `responseMimeType: "application/json"`.
+- **Groq** (`lib/ai/groqVisionProvider.ts`) — alternatief, was de
+  oorspronkelijke standaard; gratis laag heeft een krap ITPM-quotum
+  (input-tokens-per-minuut) dat bij een paar snelle testen achter elkaar al
+  geraakt wordt. OpenAI-compatibele Chat Completions API met
   `response_format: json_object`.
 - **OpenAI** (`lib/ai/openaiVisionProvider.ts`) — optioneel alternatief, met
   `response_format: json_schema` (strict).
@@ -43,21 +49,25 @@ via `AI_PROVIDER` in `lib/ai/visionProviderFactory.ts`. Twee implementaties:
 Environment variables (server-side, nooit naar de client):
 
 ```
-AI_PROVIDER=groq            # "groq" (standaard) of "openai"
-GROQ_API_KEY=                # leeg = feature staat uit, geeft nette 500-foutmelding
-GROQ_MODEL=qwen/qwen3.8-27b  # zie https://console.groq.com/docs/vision voor het actuele vision-model
+AI_PROVIDER=gemini              # "gemini" (standaard), "groq" of "openai"
+GEMINI_API_KEY=                  # leeg = feature staat uit, geeft nette 500-foutmelding
+GEMINI_MODEL=gemini-3.8-flash    # zie https://ai.google.dev/gemini-api/docs voor het actuele model
+
+# alleen nodig als AI_PROVIDER=groq:
+GROQ_API_KEY=
+GROQ_MODEL=qwen/qwen3.8-27b
 
 # alleen nodig als AI_PROVIDER=openai:
 AI_API_KEY=
 AI_MODEL=gpt-4o
 ```
 
-Groq's vision-modellenlijst verandert af en toe — check
-`console.groq.com/docs/vision` als `GROQ_MODEL` een 404/"model not found"
-oplevert, en werk de env var bij (geen codewijziging nodig). Groq's limiet:
-max. 3 afbeeldingen per API-aanroep, 20MB per afbeelding — geen probleem
-voor deze integratie, die altijd één foto per aanroep stuurt (zie
-"Conflicthantering" hieronder).
+Zowel Gemini als Groq vernieuwen hun modellenlijst af en toe — check de
+bijbehorende docs als `GEMINI_MODEL`/`GROQ_MODEL` een 404/"model not
+available" oplevert, en werk de env var bij (geen codewijziging nodig).
+Groq's limiet: max. 3 afbeeldingen per API-aanroep, 20MB per afbeelding —
+geen probleem voor deze integratie, die altijd één foto per aanroep stuurt
+(zie "Conflicthantering" hieronder).
 
 ## Ondersteunde producttypes en velden
 
