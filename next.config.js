@@ -11,7 +11,7 @@ const nextConfig = {
     // once a route is bundled into a single file.
     outputFileTracingIncludes: {
       "/api/webhooks/products-update": ["./lib/soldImage/assets/**"],
-      "/api/cron/sold-images": ["./lib/soldImage/assets/**"],
+      "/api/cron/daily": ["./lib/soldImage/assets/**"],
     },
   },
 };
