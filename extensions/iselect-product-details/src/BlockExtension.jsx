@@ -3,7 +3,12 @@ import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { validateQuickProductData } from "../../../lib/templates/quickProduct";
 import { ProductForm } from "../../shared/ProductForm.jsx";
-import { callBackend, uploadImages, toNumericId } from "../../shared/api.js";
+import {
+  callBackend,
+  uploadImages,
+  toNumericId,
+  getIdToken,
+} from "../../shared/api.js";
 
 export default async () => {
   render(<ProductEditBlock />, document.body);
@@ -25,6 +30,10 @@ function issuesFromList(list) {
   return map;
 }
 
+function issueSummary(validation) {
+  return validation.issues.map((issue) => issue.message).join(" ");
+}
+
 function ProductEditBlock() {
   const productId = toNumericId(
     shopify.data.selected && shopify.data.selected[0]
@@ -44,30 +53,38 @@ function ProductEditBlock() {
 
   async function load() {
     setLoadState({ loading: true, error: "" });
-    const token = await shopify.auth.idToken().catch(() => null);
-    if (!token) {
+    try {
+      const token = await getIdToken();
+      if (!token) {
+        setLoadState({
+          loading: false,
+          error:
+            "Kon geen Shopify-sessietoken ophalen. Ververs de pagina en probeer opnieuw.",
+        });
+        return;
+      }
+      const res = await callBackend(
+        `/api/shopify/quick-product?id=${encodeURIComponent(productId)}`,
+        { method: "GET", token }
+      );
+      if (!res.ok) {
+        setLoadState({ loading: false, error: res.error });
+        return;
+      }
+      setRead(res.data);
+      setProductType(res.data.productType || "");
+      setValues(res.data.values || {});
+      setStatus(res.data.status || "");
+      setIssues({});
+      setFormError("");
+      setSavedMessage("");
+      setLoadState({ loading: false, error: "" });
+    } catch (err) {
       setLoadState({
         loading: false,
-        error: "Kon geen Shopify-sessietoken ophalen.",
+        error: "Het product kon niet worden geladen. Probeer het opnieuw.",
       });
-      return;
     }
-    const res = await callBackend(
-      `/api/shopify/quick-product?id=${encodeURIComponent(productId)}`,
-      { method: "GET", token }
-    );
-    if (!res.ok) {
-      setLoadState({ loading: false, error: res.error });
-      return;
-    }
-    setRead(res.data);
-    setProductType(res.data.productType || "");
-    setValues(res.data.values || {});
-    setStatus(res.data.status || "");
-    setIssues({});
-    setFormError("");
-    setSavedMessage("");
-    setLoadState({ loading: false, error: "" });
   }
 
   useEffect(() => {
@@ -93,67 +110,82 @@ function ProductEditBlock() {
   }
 
   async function save() {
+    if (busy) return;
     setBusy(true);
     setFormError("");
     setSavedMessage("");
-    const validation = validateQuickProductData(productType, values);
-    setIssues(issuesByKey(validation));
-    if (!validation.ok) {
-      setFormError("Vul de gemarkeerde velden correct in.");
-      setBusy(false);
-      return;
-    }
-    const token = await shopify.auth.idToken().catch(() => null);
-    if (!token) {
-      setFormError("Kon geen Shopify-sessietoken ophalen.");
-      setBusy(false);
-      return;
-    }
-    const res = await callBackend("/api/shopify/quick-update", {
-      token,
-      body: {
-        productId,
-        productType,
-        values: validation.values,
-      },
-    });
-    setBusy(false);
-    if (!res.ok) {
-      setFormError(res.error);
-      if (res.issues && res.issues.length) {
-        setIssues(issuesFromList(res.issues));
+    try {
+      const validation = validateQuickProductData(productType, values);
+      setIssues(issuesByKey(validation));
+      if (!validation.ok) {
+        setFormError(
+          `Vul de gemarkeerde velden correct in. ${issueSummary(validation)}`.trim()
+        );
+        return;
       }
-      return;
+      const token = await getIdToken();
+      if (!token) {
+        setFormError("Kon geen Shopify-sessietoken ophalen.");
+        return;
+      }
+      const res = await callBackend("/api/shopify/quick-update", {
+        token,
+        body: {
+          productId,
+          productType,
+          values: validation.values,
+        },
+      });
+      if (!res.ok) {
+        setFormError(res.error);
+        if (res.issues && res.issues.length) {
+          setIssues(issuesFromList(res.issues));
+        }
+        return;
+      }
+      if (res.data) {
+        setStatus(res.data.status || status);
+        setRead((prev) => (prev ? { ...prev, ...res.data } : prev));
+      }
+      setSavedMessage(
+        "Opgeslagen — Shopify-titel en metafields zijn bijgewerkt."
+      );
+    } finally {
+      setBusy(false);
     }
-    if (res.data) {
-      setStatus(res.data.status || status);
-      setRead((prev) => (prev ? { ...prev, ...res.data } : prev));
-    }
-    setSavedMessage("Opgeslagen — Shopify-titel en metafields zijn bijgewerkt.");
   }
 
   async function handleFiles(files) {
     if (!files || files.length === 0) return;
+    if (imageState && imageState.busy) return;
     setImageState({ busy: true, message: "" });
-    const token = await shopify.auth.idToken().catch(() => null);
-    if (!token) {
-      setImageState({
-        busy: false,
-        message: "Kon geen Shopify-sessietoken ophalen.",
-      });
-      return;
+    try {
+      const token = await getIdToken();
+      if (!token) {
+        setImageState({
+          busy: false,
+          message: "Kon geen Shopify-sessietoken ophalen.",
+        });
+        return;
+      }
+      const uploaded = await uploadImages({ token, productId, files });
+      let message = "";
+      if (uploaded.added > 0) {
+        message = `${uploaded.added} afbeelding${
+          uploaded.added === 1 ? "" : "en"
+        } toegevoegd.`;
+      }
+      if (uploaded.error) {
+        message = message ? `${message} ${uploaded.error}` : uploaded.error;
+      }
+      setImageState({ busy: false, message });
+    } finally {
+      setImageState((prev) =>
+        prev && prev.busy
+          ? { busy: false, message: prev.message || "Upload afgebroken." }
+          : prev
+      );
     }
-    const uploaded = await uploadImages({ token, productId, files });
-    let message = "";
-    if (uploaded.added > 0) {
-      message = `${uploaded.added} afbeelding${
-        uploaded.added === 1 ? "" : "en"
-      } toegevoegd.`;
-    }
-    if (uploaded.error) {
-      message = message ? `${message} ${uploaded.error}` : uploaded.error;
-    }
-    setImageState({ busy: false, message });
   }
 
   return (

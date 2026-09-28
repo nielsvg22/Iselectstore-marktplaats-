@@ -6,20 +6,34 @@ const STATUS_OPTIONS = [
   { value: "active", label: "Actief (direct zichtbaar in de webshop)" },
 ];
 
+function acceptSelectValue(next, current) {
+  if (!next || next === current) return false;
+  return true;
+}
+
 export function ProductField({ field, value, error, onChange }) {
   const label = field.required ? field.label : `${field.label} (optioneel)`;
   if (field.kind === "boolean") {
+    const handle = (event) => {
+      const next = event.currentTarget.checked ? "true" : "false";
+      if (next !== value) onChange(next);
+    };
     return (
       <s-checkbox
         label={field.label}
         checked={value === "true"}
         details={field.help || ""}
         error={error || ""}
-        onChange={(event) => onChange(event.currentTarget.checked ? "true" : "false")}
+        onInput={handle}
+        onChange={handle}
       />
     );
   }
   if (field.kind === "select") {
+    const handle = (event) => {
+      const next = event.currentTarget.value;
+      if (acceptSelectValue(next, value)) onChange(next);
+    };
     return (
       <s-select
         label={label}
@@ -27,7 +41,8 @@ export function ProductField({ field, value, error, onChange }) {
         details={field.help || ""}
         error={error || ""}
         placeholder="Kies een optie"
-        onChange={(event) => onChange(event.currentTarget.value)}
+        onInput={handle}
+        onChange={handle}
       >
         {(field.options || []).map((option) => (
           <s-option key={option} value={option} selected={value === option}>
@@ -81,13 +96,25 @@ export function ProductForm({
 }) {
   const template = getTemplate(productType);
   const titles = template ? buildQuickProductTitles(productType, values) : null;
+  const typeError = (issues && issues.productType) || "";
+
+  const handleType = (event) => {
+    const next = event.currentTarget.value;
+    if (acceptSelectValue(next, productType)) onProductTypeChange(next);
+  };
+  const handleStatus = (event) => {
+    const next = event.currentTarget.value;
+    if (acceptSelectValue(next, status)) onStatusChange(next);
+  };
 
   return (
     <s-stack direction="block" gap="base">
       <s-select
         label="Producttype (iSelect-template)"
         value={productType || ""}
-        onChange={(event) => onProductTypeChange(event.currentTarget.value)}
+        error={typeError}
+        onInput={handleType}
+        onChange={handleType}
       >
         {listProductTypes().map((type) => (
           <s-option key={type} value={type} selected={type === productType}>
@@ -100,7 +127,8 @@ export function ProductForm({
         <s-select
           label="Status in Shopify"
           value={status || "draft"}
-          onChange={(event) => onStatusChange(event.currentTarget.value)}
+          onInput={handleStatus}
+          onChange={handleStatus}
         >
           {STATUS_OPTIONS.map((option) => (
             <s-option key={option.value} value={option.value} selected={option.value === status}>
@@ -127,8 +155,9 @@ export function ProductForm({
         ))
       ) : (
         <s-banner tone="warning" heading="Geen iSelect-template">
-          Dit product heeft geen bekend iSelect-producttype. Kies hierboven een
-          producttype om de iSelect-velden te bewerken.
+          {productType
+            ? "Dit product heeft geen bekend iSelect-producttype. Kies hierboven een producttype om de iSelect-velden te bewerken."
+            : "Kies hierboven een producttype om de iSelect-velden te tonen."}
         </s-banner>
       )}
 

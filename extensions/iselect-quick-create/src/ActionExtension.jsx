@@ -7,7 +7,7 @@ import {
   applyTemplateDefaults,
 } from "../../../lib/templates/quickProduct";
 import { ProductForm } from "../../shared/ProductForm.jsx";
-import { callBackend, uploadImages } from "../../shared/api.js";
+import { callBackend, uploadImages, getIdToken } from "../../shared/api.js";
 
 export default async () => {
   render(<QuickCreateAction />, document.body);
@@ -27,6 +27,10 @@ function issuesFromList(list) {
     map[issue.key] = issue.message;
   }
   return map;
+}
+
+function issueSummary(validation) {
+  return validation.issues.map((issue) => issue.message).join(" ");
 }
 
 function initialValues(productType) {
@@ -63,64 +67,77 @@ function QuickCreateAction() {
   }
 
   async function submit() {
+    if (busy) return;
     setBusy(true);
     setFormError("");
-    const validation = validateQuickProductData(productType, values);
-    setIssues(issuesByKey(validation));
-    if (!validation.ok) {
-      setFormError("Vul de gemarkeerde velden correct in.");
-      setBusy(false);
-      return;
-    }
-    const token = await shopify.auth.idToken().catch(() => null);
-    if (!token) {
-      setFormError(
-        "Kon geen Shopify-sessietoken ophalen. Sluit het venster en probeer opnieuw."
-      );
-      setBusy(false);
-      return;
-    }
-    const res = await callBackend("/api/shopify/quick-create", {
-      token,
-      body: { productType, status, values: validation.values },
-    });
-    setBusy(false);
-    if (!res.ok) {
-      setFormError(res.error);
-      if (res.issues && res.issues.length) {
-        setIssues(issuesFromList(res.issues));
+    try {
+      const validation = validateQuickProductData(productType, values);
+      setIssues(issuesByKey(validation));
+      if (!validation.ok) {
+        setFormError(
+          `Vul de gemarkeerde velden correct in. ${issueSummary(validation)}`.trim()
+        );
+        return;
       }
-      return;
+      const token = await getIdToken();
+      if (!token) {
+        setFormError(
+          "Kon geen Shopify-sessietoken ophalen. Sluit het venster, open het menu opnieuw en probeer het nog eens."
+        );
+        return;
+      }
+      const res = await callBackend("/api/shopify/quick-create", {
+        token,
+        body: { productType, status, values: validation.values },
+      });
+      if (!res.ok) {
+        setFormError(res.error);
+        if (res.issues && res.issues.length) {
+          setIssues(issuesFromList(res.issues));
+        }
+        return;
+      }
+      setResult(res.data);
+    } finally {
+      setBusy(false);
     }
-    setResult(res.data);
   }
 
   async function handleFiles(files) {
     if (!result || !files || files.length === 0) return;
+    if (imageState && imageState.busy) return;
     setImageState({ busy: true, message: "" });
-    const token = await shopify.auth.idToken().catch(() => null);
-    if (!token) {
-      setImageState({
-        busy: false,
-        message: "Kon geen Shopify-sessietoken ophalen.",
+    try {
+      const token = await getIdToken();
+      if (!token) {
+        setImageState({
+          busy: false,
+          message: "Kon geen Shopify-sessietoken ophalen.",
+        });
+        return;
+      }
+      const uploaded = await uploadImages({
+        token,
+        productId: result.productId,
+        files,
       });
-      return;
+      let message = "";
+      if (uploaded.added > 0) {
+        message = `${uploaded.added} afbeelding${
+          uploaded.added === 1 ? "" : "en"
+        } toegevoegd.`;
+      }
+      if (uploaded.error) {
+        message = message ? `${message} ${uploaded.error}` : uploaded.error;
+      }
+      setImageState({ busy: false, message });
+    } finally {
+      setImageState((prev) =>
+        prev && prev.busy
+          ? { busy: false, message: prev.message || "Upload afgebroken." }
+          : prev
+      );
     }
-    const uploaded = await uploadImages({
-      token,
-      productId: result.productId,
-      files,
-    });
-    let message = "";
-    if (uploaded.added > 0) {
-      message = `${uploaded.added} afbeelding${
-        uploaded.added === 1 ? "" : "en"
-      } toegevoegd.`;
-    }
-    if (uploaded.error) {
-      message = message ? `${message} ${uploaded.error}` : uploaded.error;
-    }
-    setImageState({ busy: false, message });
   }
 
   return (

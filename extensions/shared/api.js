@@ -6,6 +6,24 @@ export function toNumericId(id) {
   return parts[parts.length - 1];
 }
 
+export async function getIdToken(timeoutMs = 8000) {
+  try {
+    const shopify = globalThis.shopify;
+    if (!shopify || !shopify.auth || typeof shopify.auth.idToken !== "function") {
+      return null;
+    }
+    const token = await Promise.race([
+      shopify.auth.idToken(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("idToken timeout")), timeoutMs)
+      ),
+    ]);
+    return token || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 export async function callBackend(path, { method = "POST", token, body } = {}) {
   let response;
   try {
@@ -16,12 +34,18 @@ export async function callBackend(path, { method = "POST", token, body } = {}) {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout
+        ? AbortSignal.timeout(20000)
+        : undefined,
     });
   } catch (err) {
+    const timedOut = err && (err.name === "TimeoutError" || err.name === "AbortError");
     return {
       ok: false,
       status: 0,
-      error: "Geen verbinding met de iSelect-backend. Controleer je internetverbinding.",
+      error: timedOut
+        ? "De iSelect-backend reageerde niet op tijd. Probeer het opnieuw."
+        : "Geen verbinding met de iSelect-backend. Controleer je internetverbinding.",
       issues: [],
     };
   }
