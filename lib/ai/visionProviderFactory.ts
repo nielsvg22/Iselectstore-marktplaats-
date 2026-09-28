@@ -4,13 +4,10 @@ import { VisionProvider } from "./types";
 import { GroqVisionProvider } from "./groqVisionProvider";
 import { OpenAiVisionProvider } from "./openaiVisionProvider";
 import { GeminiVisionProvider } from "./geminiVisionProvider";
+import { FallbackVisionProvider } from "./fallbackVisionProvider";
 
-export function createVisionProviderFromEnv(): VisionProvider | null {
-  // Gemini is the default: its free tier's rate limits are far more
-  // forgiving than Groq's for normal day-to-day testing/use.
-  const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
-
-  switch (provider) {
+function buildProvider(name: string): VisionProvider | null {
+  switch (name) {
     case "gemini": {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) return null;
@@ -27,6 +24,25 @@ export function createVisionProviderFromEnv(): VisionProvider | null {
       return new OpenAiVisionProvider(apiKey, process.env.AI_MODEL || "gpt-4o");
     }
     default:
-      throw new Error(`Onbekende AI_PROVIDER: ${provider}`);
+      throw new Error(`Onbekende AI_PROVIDER: ${name}`);
   }
+}
+
+export function createVisionProviderFromEnv(): VisionProvider | null {
+  // Gemini is the default: its free tier's rate limits are far more
+  // forgiving than Groq's for normal day-to-day testing/use.
+  const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
+  const primary = buildProvider(provider);
+  if (!primary) return null;
+
+  // If Groq is configured as well and isn't already the primary, use it as
+  // an automatic fallback: a temporary outage or rate limit on one free
+  // tier no longer surfaces as "AI-service tijdelijk niet beschikbaar" as
+  // long as the other one is up.
+  if (provider !== "groq" && process.env.GROQ_API_KEY) {
+    const fallback = buildProvider("groq");
+    if (fallback) return new FallbackVisionProvider(primary, fallback);
+  }
+
+  return primary;
 }
