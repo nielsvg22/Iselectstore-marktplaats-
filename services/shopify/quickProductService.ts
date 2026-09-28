@@ -63,7 +63,9 @@ export interface QuickProductRead {
 }
 
 function assertProductId(productId: string): string {
-  const id = String(productId || "").trim();
+  const raw = String(productId || "").trim();
+  const gid = /^gid:\/\/shopify\/Product\/(\d+)$/.exec(raw);
+  const id = gid ? gid[1] : raw;
   if (!/^\d+$/.test(id)) {
     throw new QuickProductError("Ongeldig product-id.", 400);
   }

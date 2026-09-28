@@ -219,6 +219,16 @@ describe("updateQuickProduct — quick-edit save", () => {
     ).rejects.toMatchObject({ status: 400 });
     expect(mockedGet).not.toHaveBeenCalled();
   });
+
+  it("accepts a gid://shopify/Product/<id> and normalizes it", async () => {
+    await updateQuickProduct({
+      productId: "gid://shopify/Product/1659199999",
+      productType: "iPhone",
+      values: validValues,
+    });
+    expect(mockedGet).toHaveBeenCalledWith("1659199999");
+    expect(mockedUpdate).toHaveBeenCalledWith("1659199999", expect.any(Object));
+  });
 });
 
 describe("readQuickProduct — block initial state", () => {
