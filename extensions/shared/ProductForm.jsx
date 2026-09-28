@@ -1,3 +1,4 @@
+/** @jsxImportSource preact */
 import { getTemplate, listProductTypes } from "../../lib/templates/registry";
 import { buildQuickProductTitles } from "../../lib/templates/quickProduct";
 
