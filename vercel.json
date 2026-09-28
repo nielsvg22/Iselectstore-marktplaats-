@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/sold-images",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/inventory-notifications",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/catalog-cleanup",
+      "schedule": "0 4 * * *"
     }
   ]
 }

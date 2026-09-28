@@ -26,14 +26,14 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const shop = searchParams.get("shop");
   const code = searchParams.get("code");
-  const clientId = process.env.SHOPIFY_APP_CLIENT_ID;
-  const clientSecret = process.env.SHOPIFY_APP_CLIENT_SECRET;
+  const clientId = process.env.SHOPIFY_CLIENT_ID || process.env.SHOPIFY_APP_CLIENT_ID;
+  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_APP_CLIENT_SECRET;
 
   if (!shop || !code) {
     return NextResponse.json({ error: "Ontbrekende shop of code parameter." }, { status: 400 });
   }
   if (!clientId || !clientSecret) {
-    return NextResponse.json({ error: "SHOPIFY_APP_CLIENT_ID / SHOPIFY_APP_CLIENT_SECRET niet geconfigureerd." }, { status: 500 });
+    return NextResponse.json({ error: "SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET niet geconfigureerd." }, { status: 500 });
   }
   if (!verifyHmac(searchParams, clientSecret)) {
     return NextResponse.json({ error: "HMAC-validatie mislukt — mogelijke CSRF." }, { status: 400 });

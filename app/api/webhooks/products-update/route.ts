@@ -19,12 +19,14 @@ import { getSoldImageSettings } from "@/lib/soldImage/settingsService";
 import { processProductNow } from "@/lib/soldImage/soldImageService";
 import { getProduct } from "@/lib/shopify/client";
 import { logSync } from "@/lib/logging";
+import { updateLifecycleState } from "@/services/catalog/lifecycleService";
+import { checkProductObjectAndNotify } from "@/services/inventory/notificationService";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.SHOPIFY_APP_CLIENT_SECRET;
+  const secret = process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_APP_CLIENT_SECRET;
   const rawBody = await req.text();
 
   if (!secret || !verifyShopifyWebhookHmac(rawBody, req.headers.get("x-shopify-hmac-sha256"), secret)) {
@@ -59,6 +61,20 @@ export async function POST(req: NextRequest) {
   // the webhook response — the daily cron picks up anything left pending.
   // Errors are already logged inside processProductNow/soldImageService.
   await processProductNow(productId).catch(() => {});
+
+  // Update sold_at / lifecycle state. Errors are logged but never fail the webhook.
+  await updateLifecycleState(product).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logSync({ shopifyProductId: productId, action: "lifecycle_update_error", message }).catch(() => {});
+  });
+
+  // If the product is back in stock, notify matching subscriptions inline.
+  if (isBackInStock(product)) {
+    await checkProductObjectAndNotify(product).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      logSync({ shopifyProductId: productId, action: "inventory_notification_error", message }).catch(() => {});
+    });
+  }
 
   return NextResponse.json({ ok: true });
 }

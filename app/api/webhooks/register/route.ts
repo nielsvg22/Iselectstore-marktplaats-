@@ -1,10 +1,15 @@
-// One-time setup helper: registers the products/update webhook subscription
-// that drives the sold-image feature. Run this once after deploying (see
-// SOLD_IMAGE_FEATURE.md) — Shopify webhook subscriptions aren't created
+// One-time setup helper: registers the webhook subscriptions used by this app.
+// Run this once after deploying — Shopify webhook subscriptions aren't created
 // automatically just by having the route exist.
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+
+const WEBHOOKS = [
+  { topic: "products/update", path: "/api/webhooks/products-update" },
+  { topic: "products/create", path: "/api/webhooks/products-create" },
+  { topic: "app/uninstalled", path: "/api/webhooks/app-uninstalled" },
+];
 
 export async function POST(req: NextRequest) {
   const { password } = await req.json().catch(() => ({ password: undefined }));
@@ -21,21 +26,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Shopify niet geconfigureerd." }, { status: 500 });
   }
 
-  const res = await fetch(`https://${domain}/admin/api/${version}/webhooks.json`, {
-    method: "POST",
-    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      webhook: {
-        topic: "products/update",
-        address: `${appUrl}/api/webhooks/products-update`,
-        format: "json",
-      },
-    }),
-  });
+  const results: { topic: string; ok: boolean; error?: string; id?: number }[] = [];
 
-  const data = await res.json();
-  if (!res.ok) {
-    return NextResponse.json({ error: data }, { status: res.status });
+  for (const hook of WEBHOOKS) {
+    try {
+      const res = await fetch(`https://${domain}/admin/api/${version}/webhooks.json`, {
+        method: "POST",
+        headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          webhook: {
+            topic: hook.topic,
+            address: `${appUrl}${hook.path}`,
+            format: "json",
+          },
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        results.push({ topic: hook.topic, ok: false, error: data?.errors || `HTTP ${res.status}` });
+      } else {
+        results.push({ topic: hook.topic, ok: true, id: data.webhook?.id });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      results.push({ topic: hook.topic, ok: false, error: message });
+    }
   }
-  return NextResponse.json({ webhook: data.webhook });
+
+  const allOk = results.every((r) => r.ok);
+  return NextResponse.json({ ok: allOk, results }, { status: allOk ? 200 : 207 });
 }

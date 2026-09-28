@@ -9,16 +9,16 @@ import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
-const SCOPES = "read_content,read_products,write_content,write_products";
+const SCOPES = "read_content,read_products,write_content,write_products,read_inventory";
 
 export async function GET(req: NextRequest) {
   const shop = req.nextUrl.searchParams.get("shop");
-  const clientId = process.env.SHOPIFY_APP_CLIENT_ID;
+  const clientId = process.env.SHOPIFY_CLIENT_ID || process.env.SHOPIFY_APP_CLIENT_ID;
   if (!shop || !/^[a-zA-Z0-9-]+\.myshopify\.com$/.test(shop)) {
     return NextResponse.json({ error: "Ongeldige of ontbrekende shop parameter." }, { status: 400 });
   }
   if (!clientId) {
-    return NextResponse.json({ error: "SHOPIFY_APP_CLIENT_ID niet geconfigureerd." }, { status: 500 });
+    return NextResponse.json({ error: "SHOPIFY_CLIENT_ID / SHOPIFY_APP_CLIENT_ID niet geconfigureerd." }, { status: 500 });
   }
 
   const state = crypto.randomBytes(16).toString("hex");
