@@ -1,6 +1,6 @@
 import "@shopify/ui-extensions/preact";
 import { render } from "preact";
-import { useState } from "preact/hooks";
+import { useState, useEffect } from "preact/hooks";
 import { getTemplate, listProductTypes } from "../../../lib/templates/registry";
 import {
   validateQuickProductData,
@@ -8,6 +8,38 @@ import {
 } from "../../../lib/templates/quickProduct";
 import { ProductForm } from "../../shared/ProductForm.jsx";
 import { callBackend, uploadImages, getIdToken, BACKEND_URL } from "../../shared/api.js";
+
+function makeDraftId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function base64FromDataUrl(dataUrl) {
+  const idx = String(dataUrl || "").indexOf(",");
+  return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+}
+
+async function uploadDraftImages(token, productId, images) {
+  const result = { added: 0, error: "" };
+  for (const img of images || []) {
+    const res = await callBackend("/api/shopify/quick-image", {
+      token,
+      body: {
+        productId,
+        filename: img.filename || "image.jpg",
+        data: base64FromDataUrl(img.dataUrl),
+      },
+    });
+    if (!res.ok) {
+      result.error = res.error;
+      break;
+    }
+    result.added += 1;
+  }
+  return result;
+}
 
 export default async () => {
   render(<QuickCreateAction />, document.body);
@@ -48,6 +80,82 @@ function QuickCreateAction() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [imageState, setImageState] = useState(null);
+
+  // Gekoppeld aan de "Haal info op via AI-foto"-link hieronder: dezelfde
+  // draftId komt terug op /admin/quick-create, dat herkende velden + foto's
+  // hieronder opslaat zodat dit open formulier ze automatisch overneemt.
+  const [draftId] = useState(makeDraftId);
+  const [draftImages, setDraftImages] = useState([]);
+  const [draftStatus, setDraftStatus] = useState("");
+
+  async function fetchDraft(auto) {
+    if (busy || result) return;
+    if (!auto) setDraftStatus("Bezig met ophalen…");
+    const token = await getIdToken();
+    if (!token) {
+      if (!auto) setDraftStatus("Kon geen Shopify-sessietoken ophalen.");
+      return;
+    }
+    const res = await callBackend(`/api/shopify/quick-create/draft?draftId=${draftId}`, {
+      method: "GET",
+      token,
+    });
+    const draft = res.ok ? res.data && res.data.draft : null;
+    if (!draft) {
+      if (!auto) setDraftStatus("Nog geen gegevens — upload eerst een foto op de AI-pagina.");
+      return;
+    }
+    setValues((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const [key, value] of Object.entries(draft.values || {})) {
+        if (!next[key] && value) {
+          next[key] = value;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    if (draft.images && draft.images.length > 0) {
+      setDraftImages(draft.images);
+    }
+    setDraftStatus(
+      `✓ Bijgewerkt vanaf de AI-pagina (${new Date(draft.updatedAt).toLocaleTimeString("nl-NL")}).`
+    );
+  }
+
+  // Automatisch pollen zolang het formulier open staat — geen handmatige
+  // "Ophalen"-klik nodig zodra er op de AI-pagina iets herkend is.
+  useEffect(() => {
+    if (result) return;
+    const interval = setInterval(() => fetchDraft(true), 4000);
+    return () => clearInterval(interval);
+  }, [result, draftId]);
+
+  // Zodra het product is aangemaakt: foto's die via de AI-pagina zijn
+  // opgehaald automatisch meesturen, zonder dat de gebruiker ze opnieuw
+  // hoeft te uploaden in dit venster.
+  useEffect(() => {
+    if (!result || draftImages.length === 0) return;
+    (async () => {
+      setImageState({ busy: true, message: "" });
+      const token = await getIdToken();
+      if (!token) {
+        setImageState({ busy: false, message: "Kon geen Shopify-sessietoken ophalen voor de AI-foto's." });
+        return;
+      }
+      const uploaded = await uploadDraftImages(token, result.productId, draftImages);
+      let message = "";
+      if (uploaded.added > 0) {
+        message = `${uploaded.added} foto${uploaded.added === 1 ? "" : "'s"} van de AI-pagina toegevoegd.`;
+      }
+      if (uploaded.error) {
+        message = message ? `${message} ${uploaded.error}` : uploaded.error;
+      }
+      setImageState({ busy: false, message });
+      setDraftImages([]);
+    })();
+  }, [result]);
 
   function handleProductTypeChange(next) {
     setProductType(next);
@@ -178,12 +286,18 @@ function QuickCreateAction() {
             issues={issues}
             onChange={handleValueChange}
             aiShortcut={
-              <s-link
-                href={`${BACKEND_URL}/admin/quick-create?productType=${encodeURIComponent(productType)}`}
-                target="_blank"
-              >
-                📷 Haal info op via AI-foto
-              </s-link>
+              <s-stack direction="inline" gap="base" alignItems="center">
+                <s-link
+                  href={`${BACKEND_URL}/admin/quick-create?productType=${encodeURIComponent(productType)}&draftId=${draftId}`}
+                  target="_blank"
+                >
+                  📷 Haal info op via AI-foto
+                </s-link>
+                <s-button variant="tertiary" onClick={() => fetchDraft(false)}>
+                  🔄 Nu ophalen
+                </s-button>
+                {draftStatus ? <s-text tone="subdued">{draftStatus}</s-text> : null}
+              </s-stack>
             }
           />
         )}

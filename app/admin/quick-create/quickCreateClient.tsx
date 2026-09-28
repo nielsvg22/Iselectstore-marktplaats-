@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AIRecognitionPanel, type AppliedField } from "../AIRecognitionPanel";
 import { getTemplate } from "@/lib/templates/registry";
 import { buildQuickProductTitles, validateQuickProductData } from "@/lib/templates/quickProduct";
@@ -135,11 +136,18 @@ export function QuickCreateClient({ initialProductType, knownProductTypes, store
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<CreatedProduct | null>(null);
+  const [draftSynced, setDraftSynced] = useState(false);
+
+  // Vanuit het Shopify-actievenster: dezelfde draftId staat in de link
+  // "Haal info op via AI-foto", zodat herkende velden + foto's terugvloeien
+  // naar dat open formulier (zie services/shopify/quickCreateDraftService.ts).
+  const draftId = useSearchParams().get("draftId");
 
   // Spiegel van de laatste formulerwaarden zodat AI-toepassing altijd op de
   // meest recente state werkt (setValues-updaters zijn niet synchroon).
   const valuesRef = useRef(values);
   valuesRef.current = values;
+  const imagesRef = useRef<{ dataUrl: string; filename: string }[]>([]);
 
   const template: ProductTemplate | undefined = getTemplate(productType);
   const missing = missingRequiredCount(template, values);
@@ -169,7 +177,22 @@ export function QuickCreateClient({ initialProductType, knownProductTypes, store
     const outcome = aiFieldsToValues(template, valuesRef.current, fields);
     valuesRef.current = outcome.values;
     setValues(outcome.values);
+    syncDraft(outcome.values);
     return outcome.appliedKeys;
+  }
+
+  function syncDraft(nextValues: Record<string, string>) {
+    if (!draftId) return;
+    fetch("/api/shopify/quick-create/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId, productType, values: nextValues, images: imagesRef.current }),
+    })
+      .then(() => setDraftSynced(true))
+      .catch(() => {
+        // Best-effort: het formulier hier blijft gewoon bruikbaar als de
+        // sync mislukt, alleen komt het niet terug in het Shopify-venster.
+      });
   }
 
   async function submit(status: "draft" | "active") {
@@ -295,10 +318,32 @@ export function QuickCreateClient({ initialProductType, knownProductTypes, store
         {issues.productType && <div style={errorStyle}>{issues.productType}</div>}
       </div>
 
+      {draftId && (
+        <div
+          style={{
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            borderRadius: 10,
+            padding: "10px 14px",
+            fontSize: 13,
+            color: "#1e40af",
+          }}
+        >
+          🔗 Gekoppeld aan het openstaande formulier in Shopify — herkende velden en foto&apos;s komen daar
+          automatisch in terug.{draftSynced && " Laatste update verstuurd ✓"}
+        </div>
+      )}
+
       <AIRecognitionPanel
         key={productType}
         productType={productType}
         onFieldsApplied={handleFieldsApplied}
+        onImagesReady={(images) => {
+          imagesRef.current = images;
+          // Foto's meteen doorsturen, ook als herkenning zelf niets vindt —
+          // de gebruiker wil de foto sowieso terug in het Shopify-formulier.
+          syncDraft(valuesRef.current);
+        }}
         autoApply
       />
 

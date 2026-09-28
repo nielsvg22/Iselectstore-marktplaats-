@@ -43,6 +43,10 @@ interface AIRecognitionPanelProps {
   /** Create mode: pas HIGH/MEDIUM-velden direct toe na herkenning. LOW en
    * conflicterende velden blijven altijd expliciet aan de gebruiker. */
   autoApply?: boolean;
+  /** Roept de geüploade foto's (als data-URL) door zodra ze zijn ingelezen —
+   * gebruikt door quick-create om ze in een draft te bewaren voor de Shopify-
+   * extensie, los van of herkenning zelf slaagt. */
+  onImagesReady?: (images: { dataUrl: string; filename: string }[]) => void;
 }
 
 const levelLabel: Record<Level, string> = { HIGH: "Hoog", MEDIUM: "Middel", LOW: "Laag" };
@@ -74,6 +78,7 @@ export function AIRecognitionPanel({
   productType,
   onFieldsApplied,
   autoApply = false,
+  onImagesReady,
 }: AIRecognitionPanelProps) {
   const createMode = typeof onFieldsApplied === "function";
   const [files, setFiles] = useState<File[]>([]);
@@ -102,6 +107,7 @@ export function AIRecognitionPanel({
     setChoices({});
     try {
       const images = await Promise.all(files.map(async (f) => ({ dataUrl: await fileToDataUrl(f), filename: f.name })));
+      onImagesReady?.(images);
       const res = await fetch("/api/ai/recognize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
