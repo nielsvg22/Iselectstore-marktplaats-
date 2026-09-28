@@ -32,9 +32,9 @@ const DEFAULTS: SoldImageSettings = {
   delayHours: 0,
   stickerText: "VERKOCHT",
   position: "center",
-  // Compact rounded badge, matching the site's other product badges — not
-  // the original diagonal ribbon.
-  style: "pill",
+  // Diagonal ribbon — the original, intended look for the VERKOCHT sticker.
+  // "pill" (a compact corner badge) is available in the settings UI too.
+  style: "ribbon",
   sizePercent: 60,
   opacity: 0.85,
   bandColorHex: "#dc2626",

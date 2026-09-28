@@ -23,8 +23,8 @@ const positionLabels: Record<Settings["position"], string> = {
 };
 
 const styleLabels: Record<Settings["style"], string> = {
-  pill: "Badge (compacte ronde pil, zoals de andere productlabels)",
   ribbon: "Lint (diagonale banner over de hoek)",
+  pill: "Badge (compacte pil, vlak in de hoek)",
 };
 
 export function SoldImageSettingsForm({ initial }: { initial: Settings }) {

@@ -88,8 +88,10 @@ function drawCornerRibbon(
   ctx.restore();
 }
 
-/** Draws a compact rounded pill sized to the text, matching the site's other product badges
- * (solid fill, bold white text, no rotation) instead of a diagonal ribbon. */
+/** Draws a compact badge sized to the text, flush against the image's actual corner (zero
+ * margin) so it fills the corner with no background gap — only the two outer corners are
+ * rounded, the corner touching the image edge stays sharp. Matches the site's other product
+ * badges (solid fill, bold white text, no rotation) instead of a diagonal ribbon. */
 function drawCornerPill(
   ctx: import("@napi-rs/canvas").SKRSContext2D,
   width: number,
@@ -97,7 +99,6 @@ function drawCornerPill(
   settings: SoldImageSettings,
   corner: "top-left" | "top-right" | "bottom-left" | "bottom-right"
 ) {
-  const margin = width * 0.04;
   const fontSize = Math.max(12, width * 0.032 * (settings.sizePercent / 60));
   ctx.font = `${fontSize}px "${FONT_FAMILY}"`;
   const textWidth = ctx.measureText(settings.stickerText).width;
@@ -110,11 +111,17 @@ function drawCornerPill(
 
   const isTop = corner.startsWith("top");
   const isLeft = corner.endsWith("left");
-  const x = isLeft ? margin : width - margin - pillWidth;
-  const y = isTop ? margin : height - margin - pillHeight;
+  // Flush against the image edges — no margin — so the badge fills the corner itself.
+  const x = isLeft ? 0 : width - pillWidth;
+  const y = isTop ? 0 : height - pillHeight;
 
   ctx.fillStyle = hexToRgba(settings.bandColorHex, settings.opacity);
-  roundedRect(ctx, x, y, pillWidth, pillHeight, radius);
+  roundedRectCorners(ctx, x, y, pillWidth, pillHeight, {
+    tl: isTop && isLeft ? 0 : radius,
+    tr: isTop && !isLeft ? 0 : radius,
+    br: !isTop && !isLeft ? 0 : radius,
+    bl: !isTop && isLeft ? 0 : radius,
+  });
   ctx.fill();
 
   ctx.fillStyle = settings.textColorHex;
@@ -124,12 +131,29 @@ function drawCornerPill(
 }
 
 function roundedRect(ctx: import("@napi-rs/canvas").SKRSContext2D, x: number, y: number, w: number, h: number, r: number) {
+  roundedRectCorners(ctx, x, y, w, h, { tl: r, tr: r, br: r, bl: r });
+}
+
+/** Like roundedRect, but each corner's radius can differ — 0 gives a sharp corner. */
+function roundedRectCorners(
+  ctx: import("@napi-rs/canvas").SKRSContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radii: { tl: number; tr: number; br: number; bl: number }
+) {
+  const { tl, tr, br, bl } = radii;
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
+  ctx.moveTo(x + tl, y);
+  ctx.lineTo(x + w - tr, y);
+  ctx.arcTo(x + w, y, x + w, y + tr, tr);
+  ctx.lineTo(x + w, y + h - br);
+  ctx.arcTo(x + w, y + h, x + w - br, y + h, br);
+  ctx.lineTo(x + bl, y + h);
+  ctx.arcTo(x, y + h, x, y + h - bl, bl);
+  ctx.lineTo(x, y + tl);
+  ctx.arcTo(x, y, x + tl, y, tl);
   ctx.closePath();
 }
 
