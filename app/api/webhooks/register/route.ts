@@ -2,6 +2,7 @@
 // Run this once after deploying — Shopify webhook subscriptions aren't created
 // automatically just by having the route exist.
 import { NextRequest, NextResponse } from "next/server";
+import { getShopifyAccessToken } from "@/lib/shopify/tokenService";
 
 export const dynamic = "force-dynamic";
 
@@ -18,13 +19,13 @@ export async function POST(req: NextRequest) {
   }
 
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
   const version = process.env.SHOPIFY_API_VERSION || "2024-10";
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
 
-  if (!domain || !token) {
+  if (!domain) {
     return NextResponse.json({ error: "Shopify niet geconfigureerd." }, { status: 500 });
   }
+  const token = await getShopifyAccessToken();
 
   const results: { topic: string; ok: boolean; error?: string; id?: number }[] = [];
 

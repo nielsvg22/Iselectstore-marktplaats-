@@ -1,22 +1,23 @@
 import { query } from "@/lib/db";
+import { getShopifyAccessToken } from "@/lib/shopify/tokenService";
 
 interface PublicationRow {
   id: string;
   name: string;
 }
 
-function config() {
+async function config() {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
   const version = process.env.SHOPIFY_API_VERSION || "2024-10";
-  if (!domain || !token) {
-    throw new Error("SHOPIFY_STORE_DOMAIN / SHOPIFY_ADMIN_ACCESS_TOKEN not configured");
+  if (!domain) {
+    throw new Error("SHOPIFY_STORE_DOMAIN not configured");
   }
+  const token = await getShopifyAccessToken();
   return { domain, token, version };
 }
 
 async function shopifyFetch(path: string, init?: RequestInit) {
-  const { domain, token, version } = config();
+  const { domain, token, version } = await config();
   const res = await fetch(`https://${domain}/admin/api/${version}${path}`, {
     ...init,
     headers: {
@@ -35,7 +36,7 @@ async function shopifyFetch(path: string, init?: RequestInit) {
 
 /** Fetches the Online Store publication ID via GraphQL (REST has no publication list endpoint). */
 async function getOnlineStorePublicationId(): Promise<string | null> {
-  const { domain, token, version } = config();
+  const { domain, token, version } = await config();
   const res = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, {
     method: "POST",
     headers: {
@@ -79,7 +80,7 @@ export async function unpublishFromOnlineStore(productId: string): Promise<void>
     throw new Error("Online Store publication niet gevonden");
   }
 
-  const { domain, token, version } = config();
+  const { domain, token, version } = await config();
   const res = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, {
     method: "POST",
     headers: {
@@ -129,7 +130,7 @@ export async function publishToOnlineStore(productId: string): Promise<void> {
     throw new Error("Online Store publication niet gevonden");
   }
 
-  const { domain, token, version } = config();
+  const { domain, token, version } = await config();
   const res = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, {
     method: "POST",
     headers: {

@@ -6,6 +6,7 @@
 // extension surfaces them, filtered per product type.
 
 import { MKT_NAMESPACE, MetafieldWrite } from "./metafields";
+import { getShopifyAccessToken } from "./tokenService";
 
 export { MKT_NAMESPACE };
 
@@ -48,18 +49,20 @@ export interface ShopifyProduct {
   variants: ShopifyVariant[];
 }
 
-function config() {
+async function config() {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
-  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
   const version = process.env.SHOPIFY_API_VERSION || "2024-10";
-  if (!domain || !token) {
-    throw new Error("SHOPIFY_STORE_DOMAIN / SHOPIFY_ADMIN_ACCESS_TOKEN not configured");
+  if (!domain) {
+    throw new Error("SHOPIFY_STORE_DOMAIN not configured");
   }
+  // Self-refreshing (see tokenService.ts) — never goes stale, no manual
+  // token rotation needed. SHOPIFY_ADMIN_ACCESS_TOKEN is no longer read.
+  const token = await getShopifyAccessToken();
   return { domain, token, version };
 }
 
 async function shopifyFetch(path: string, init?: RequestInit) {
-  const { domain, token, version } = config();
+  const { domain, token, version } = await config();
   const res = await fetch(`https://${domain}/admin/api/${version}${path}`, {
     ...init,
     headers: {
