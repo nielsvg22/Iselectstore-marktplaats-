@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
 
     if (!email || !isValidEmail(email)) {
       return NextResponse.json(
-        { error: "Voer een geldig e-mailadres in." },
+        { error: "Voer een geldig e-mailadres in.", code: "invalid_email" },
         { status: 400, headers: corsHeaders(origin) }
       );
     }
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       // subscription can never drift from what the notifier looks up later.
       if (!/^\d+$/.test(productId)) {
         return NextResponse.json(
-          { error: "Ongeldig product." },
+          { error: "Ongeldig product.", code: "invalid_product" },
           { status: 400, headers: corsHeaders(origin) }
         );
       }
@@ -85,18 +85,18 @@ export async function POST(req: NextRequest) {
 
     if (!productType || !model) {
       return NextResponse.json(
-        { error: "Dit product kon niet worden herkend. Probeer het later opnieuw." },
+        { error: "Dit product kon niet worden herkend. Probeer het later opnieuw.", code: "unrecognized_product" },
         { status: 400, headers: corsHeaders(origin) }
       );
     }
 
     await createSubscription({ email, productType, model, storage });
     return NextResponse.json(
-      { ok: true, message: "Je ontvangt een melding zodra dit product weer beschikbaar is." },
+      { ok: true, code: "ok", message: "Je ontvangt een melding zodra dit product weer beschikbaar is." },
       { headers: corsHeaders(origin) }
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500, headers: corsHeaders(origin) });
+    return NextResponse.json({ error: message, code: "error" }, { status: 500, headers: corsHeaders(origin) });
   }
 }
