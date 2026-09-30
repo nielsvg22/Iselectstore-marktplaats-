@@ -17,16 +17,46 @@ function getMetafieldValue(product: ShopifyProduct, namespace: string, key: stri
   return extended.metafields?.find((m) => m.namespace === namespace && m.key === key)?.value;
 }
 
-function normalizeStorage(value: string | number | undefined): string {
+/**
+ * Normalises a storage value to the canonical `<number><UNIT>` form.
+ *
+ *   "256 GB" / "256GB" / "256 gb" / 256  ->  "256GB"
+ *   "1 TB"                               ->  "1TB"   (unit is preserved!)
+ *
+ * Anything that cannot be parsed as a quantity returns "" so a broken
+ * metafield can never poison the match key with a made-up value.
+ */
+export function normalizeStorage(value: string | number | undefined | null): string {
   if (value === undefined || value === null) return "";
-  const s = String(value).toLowerCase().replace(/\s/g, "").replace(/(gb|tb)$/i, "");
-  if (!s) return "";
-  return `${s}GB`;
+  const raw = String(value).trim();
+  if (!raw) return "";
+
+  const withUnit = raw.match(/^(\d+(?:[.,]\d+)?)\s*(b|kb|mb|gb|tb)$/i);
+  if (withUnit) return `${withUnit[1].replace(",", ".")}${withUnit[2].toUpperCase()}`;
+
+  const bare = raw.match(/^(\d+(?:[.,]\d+)?)$/);
+  if (bare) return `${bare[1].replace(",", ".")}GB`;
+
+  return "";
 }
 
-function normalizeModel(value: string | undefined): string {
+/** Collapses runs of whitespace and trims — the model part of the match key. */
+export function normalizeModel(value: string | undefined | null): string {
   if (!value) return "";
-  return value.replace(/\s+/g, " ").trim();
+  return String(value).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Normalises a whole identity so subscribe-time and notify-time keys are
+ * byte-for-byte identical. Every writer/reader of
+ * `inventory_notification_subscriptions` must go through this.
+ */
+export function normalizeIdentity(identity: Partial<ProductIdentity>): ProductIdentity {
+  return {
+    productType: (identity.productType || "").replace(/\s+/g, " ").trim(),
+    model: normalizeModel(identity.model),
+    storage: normalizeStorage(identity.storage),
+  };
 }
 
 /** Collapses whitespace left behind by removing a storage token from a title. */
@@ -42,7 +72,7 @@ function collapseWhitespace(value: string): string {
  * Falls back to product title parsing only when metafields are missing.
  */
 export function extractProductIdentity(product: ShopifyProduct, attachedMetafields?: ShopifyMetafield[] | AttachedMetafield[]): ProductIdentity {
-  const productType = (product.product_type || "").trim();
+  const productType = (product.product_type || "").replace(/\s+/g, " ").trim();
 
   let model = normalizeModel(getMetafieldValue(product, MKT_NAMESPACE, "model"));
   if (!model && attachedMetafields) {
@@ -69,7 +99,7 @@ export function extractProductIdentity(product: ShopifyProduct, attachedMetafiel
   }
   if (!storage) {
     const match = product.title?.match(/(\d+)\s?(GB|TB)\b/i);
-    if (match) storage = `${match[1]}${match[2].toUpperCase()}`;
+    if (match) storage = normalizeStorage(`${match[1]} ${match[2]}`);
   }
 
   return {
@@ -87,13 +117,13 @@ export function extractProductIdentity(product: ShopifyProduct, attachedMetafiel
  */
 export async function resolveProductIdentity(product: ShopifyProduct): Promise<ProductIdentity> {
   const identity = extractProductIdentity(product);
-  if (identity.model && identity.storage) return identity;
+  if (identity.model && identity.storage) return normalizeIdentity(identity);
 
   try {
     const metafields = await getAllProductMetafields(String(product.id));
-    return extractProductIdentity(product, metafields);
+    return normalizeIdentity(extractProductIdentity(product, metafields));
   } catch {
-    return identity;
+    return normalizeIdentity(identity);
   }
 }
 

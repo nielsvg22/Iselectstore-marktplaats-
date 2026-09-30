@@ -171,6 +171,12 @@ CREATE INDEX IF NOT EXISTS idx_inventory_notification_history_subscription
 CREATE INDEX IF NOT EXISTS idx_inventory_notification_history_product
   ON inventory_notification_history(shopify_product_id);
 
+-- Idempotency guard: er kan nooit meer dan één (verzonden) melding bestaan
+-- per abonnement per product. Dit is de database-level vangnet achter de
+-- 'notifying'-lease op de subscription (webhook + cron tegelijk -> 1 mail).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_notification_history
+  ON inventory_notification_history(subscription_id, shopify_product_id);
+
 -- =============================================================================
 -- Product lifecycle: sold_at + 28-dagen cleanup (nieuw)
 -- =============================================================================

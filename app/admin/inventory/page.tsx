@@ -9,6 +9,7 @@ interface CountRow {
   total: number;
   active: number;
   notified: number;
+  lastSignup?: string | null;
 }
 
 export default function InventoryAdminPage() {
@@ -63,6 +64,7 @@ export default function InventoryAdminPage() {
                 <th style={{ padding: "12px 16px", fontSize: 13, color: "#6b7280", fontWeight: 600 }}>Actief</th>
                 <th style={{ padding: "12px 16px", fontSize: 13, color: "#6b7280", fontWeight: 600 }}>Verzonden</th>
                 <th style={{ padding: "12px 16px", fontSize: 13, color: "#6b7280", fontWeight: 600 }}>Totaal</th>
+                <th style={{ padding: "12px 16px", fontSize: 13, color: "#6b7280", fontWeight: 600 }}>Laatste aanmelding</th>
               </tr>
             </thead>
             <tbody>
@@ -74,11 +76,14 @@ export default function InventoryAdminPage() {
                   <td style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, color: "#16a34a" }}>{row.active}</td>
                   <td style={{ padding: "12px 16px", fontSize: 14 }}>{row.notified}</td>
                   <td style={{ padding: "12px 16px", fontSize: 14 }}>{row.total}</td>
+                  <td style={{ padding: "12px 16px", fontSize: 14, color: "#6b7280" }}>
+                    {row.lastSignup ? new Date(row.lastSignup).toLocaleString("nl-NL") : "—"}
+                  </td>
                 </tr>
               ))}
               {counts.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ padding: 24, textAlign: "center", color: "#6b7280" }}>
+                  <td colSpan={7} style={{ padding: 24, textAlign: "center", color: "#6b7280" }}>
                     Nog geen voorraadmeldingen ontvangen.
                   </td>
                 </tr>

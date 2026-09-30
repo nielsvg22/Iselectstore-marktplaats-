@@ -1,6 +1,17 @@
 import { query } from "@/lib/db";
+import { normalizeIdentity } from "@/services/shopify/productIdentity";
 
-export type SubscriptionStatus = "active" | "notified" | "cancelled";
+/**
+ * active      — waiting for a restock
+ * notifying   — a webhook/cron run currently owns this subscription and is
+ *               sending the e-mail (short-lived lease, see claimForNotification)
+ * notified    — the e-mail went out; terminal until the user re-subscribes
+ * cancelled   — user opted out
+ */
+export type SubscriptionStatus = "active" | "notifying" | "notified" | "cancelled";
+
+/** How long a `notifying` lease is held before another run may take over. */
+const CLAIM_LEASE = "interval '10 minutes'";
 
 export interface InventorySubscription {
   id: number;
@@ -47,15 +58,17 @@ export interface CreateSubscriptionInput {
   storage: string;
 }
 
-export async function createSubscription(input: CreateSubscriptionInput): Promise<InventorySubscription> {
-  const normalized = {
-    email: input.email.trim().toLowerCase(),
-    productType: input.productType.trim(),
-    model: input.model.trim(),
-    storage: input.storage.trim(),
-  };
+export interface CreateSubscriptionResult {
+  subscription: InventorySubscription;
+  /** false when an identical (email, type, model, storage) row already existed. */
+  created: boolean;
+}
 
-  const rows = await query<SubscriptionRow>(
+export async function createSubscription(input: CreateSubscriptionInput): Promise<CreateSubscriptionResult> {
+  const normalized = normalizeIdentity(input);
+  const email = input.email.trim().toLowerCase();
+
+  const rows = await query<SubscriptionRow & { inserted: boolean }>(
     `INSERT INTO inventory_notification_subscriptions (email, product_type, model, storage, signup_at, status)
      VALUES ($1,$2,$3,$4, now(), 'active')
      ON CONFLICT (email, product_type, model, storage) DO UPDATE SET
@@ -63,27 +76,65 @@ export async function createSubscription(input: CreateSubscriptionInput): Promis
        notified_at = NULL,
        matched_product_id = NULL,
        updated_at = now()
-     RETURNING *`,
-    [normalized.email, normalized.productType, normalized.model, normalized.storage]
+     RETURNING *, (xmax = 0)::boolean AS inserted`,
+    [email, normalized.productType, normalized.model, normalized.storage]
   );
 
-  return fromRow(rows[0]);
+  const row = rows[0];
+  const { inserted, ...rest } = row;
+  return { subscription: fromRow(rest as SubscriptionRow), created: Boolean(inserted) };
 }
 
 export async function findActiveSubscriptions(productType: string, model: string, storage: string): Promise<InventorySubscription[]> {
+  const identity = normalizeIdentity({ productType, model, storage });
   const rows = await query<SubscriptionRow>(
     `SELECT * FROM inventory_notification_subscriptions
      WHERE product_type = $1 AND model = $2 AND storage = $3 AND status = 'active'`,
-    [productType.trim(), model.trim(), storage.trim()]
+    [identity.productType, identity.model, identity.storage]
   );
   return rows.map(fromRow);
+}
+
+/**
+ * Atomically takes ownership of a subscription for one notification attempt.
+ *
+ * Two runners (webhook + cron) can both read the same active row, but only
+ * one UPDATE will see `status = 'active'` and flip it to `notifying`; the
+ * other gets zero rows back and skips. Combined with the unique history index
+ * this guarantees at most one e-mail per (subscription, product).
+ *
+ * A crashed run is recovered automatically once the lease expires.
+ */
+export async function claimForNotification(subscriptionId: number): Promise<boolean> {
+  const rows = await query<{ id: number }>(
+    `UPDATE inventory_notification_subscriptions
+     SET status = 'notifying', updated_at = now()
+     WHERE id = $1
+       AND (
+         status = 'active'
+         OR (status = 'notifying' AND updated_at < now() - ${CLAIM_LEASE})
+       )
+     RETURNING id`,
+    [subscriptionId]
+  );
+  return rows.length > 0;
+}
+
+/** Releases a lease after a failed send so the next run can retry. */
+export async function releaseNotificationClaim(subscriptionId: number): Promise<void> {
+  await query(
+    `UPDATE inventory_notification_subscriptions
+     SET status = 'active', updated_at = now()
+     WHERE id = $1 AND status = 'notifying'`,
+    [subscriptionId]
+  );
 }
 
 export async function markNotified(subscriptionId: number, productId: string): Promise<void> {
   await query(
     `UPDATE inventory_notification_subscriptions
      SET status = 'notified', notified_at = now(), matched_product_id = $2, updated_at = now()
-     WHERE id = $1`,
+     WHERE id = $1 AND status IN ('notifying', 'active', 'notified')`,
     [subscriptionId, productId]
   );
 }
@@ -102,15 +153,15 @@ export async function listSubscriptions(filters: SubscriptionFilters = {}): Prom
 
   if (filters.productType) {
     conditions.push(`product_type = $${idx++}`);
-    params.push(filters.productType.trim());
+    params.push(normalizeIdentity({ productType: filters.productType }).productType);
   }
   if (filters.model) {
     conditions.push(`model = $${idx++}`);
-    params.push(filters.model.trim());
+    params.push(normalizeIdentity({ model: filters.model }).model);
   }
   if (filters.storage) {
     conditions.push(`storage = $${idx++}`);
-    params.push(filters.storage.trim());
+    params.push(normalizeIdentity({ storage: filters.storage }).storage);
   }
   if (filters.status) {
     conditions.push(`status = $${idx++}`);
@@ -125,7 +176,15 @@ export async function listSubscriptions(filters: SubscriptionFilters = {}): Prom
   return rows.map(fromRow);
 }
 
-export async function getSubscriptionCounts(): Promise<{ productType: string; model: string; storage: string; total: number; active: number; notified: number }[]> {
+export async function getSubscriptionCounts(): Promise<{
+  productType: string;
+  model: string;
+  storage: string;
+  total: number;
+  active: number;
+  notified: number;
+  lastSignup: string | null;
+}[]> {
   const rows = await query<{
     product_type: string;
     model: string;
@@ -133,14 +192,16 @@ export async function getSubscriptionCounts(): Promise<{ productType: string; mo
     total: string;
     active: string;
     notified: string;
+    last_signup_at: string | null;
   }>(
     `SELECT
        product_type,
        model,
        storage,
        COUNT(*)::int AS total,
-       COUNT(*) FILTER (WHERE status = 'active')::int AS active,
-       COUNT(*) FILTER (WHERE status = 'notified')::int AS notified
+       COUNT(*) FILTER (WHERE status IN ('active', 'notifying'))::int AS active,
+       COUNT(*) FILTER (WHERE status = 'notified')::int AS notified,
+       MAX(signup_at) AS last_signup_at
      FROM inventory_notification_subscriptions
      GROUP BY product_type, model, storage
      ORDER BY active DESC, product_type, model, storage`
@@ -152,5 +213,6 @@ export async function getSubscriptionCounts(): Promise<{ productType: string; mo
     total: Number(r.total),
     active: Number(r.active),
     notified: Number(r.notified),
+    lastSignup: r.last_signup_at,
   }));
 }

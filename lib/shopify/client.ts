@@ -102,9 +102,25 @@ export async function updateProduct(productId: string, product: Record<string, u
   return data.product as ShopifyProduct;
 }
 
+/**
+ * Lists products, paging through the REST collection so callers can scan the
+ * whole catalogue instead of silently stopping at one 250-item page.
+ */
 export async function listProducts(limit = 50): Promise<ShopifyProduct[]> {
-  const data = await shopifyFetch(`/products.json?limit=${limit}`);
-  return data.products as ShopifyProduct[];
+  const pageSize = Math.min(Math.max(limit, 1), 250);
+  const all: ShopifyProduct[] = [];
+  let page = 1;
+
+  while (all.length < limit) {
+    const data = await shopifyFetch(`/products.json?limit=${pageSize}&page=${page}`);
+    const batch = (data.products as ShopifyProduct[]) || [];
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+    page += 1;
+    if (page > 50) break; // hard safety valve: 12.500 products
+  }
+
+  return all.slice(0, limit);
 }
 
 export async function getProductMetafields(productId: string): Promise<ShopifyMetafield[]> {

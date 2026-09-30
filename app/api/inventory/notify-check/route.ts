@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkProductAndNotify, scanAllProductsAndNotify } from "@/services/inventory/notificationService";
+import { EmailConfigError } from "@/services/notifications/emailProviderFactory";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, summary });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    const code = err instanceof EmailConfigError ? "email_not_configured" : "error";
+    console.error(`[inventory-notify-check] ${message}`);
+    return NextResponse.json({ error: message, code }, { status: 500 });
   }
 }
