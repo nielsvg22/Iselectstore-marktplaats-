@@ -251,11 +251,16 @@ VPS in plaats van je eigen laptop.
   (bv. `chrome`), `MARKTPLAATS_BROWSER_LOGIN_TIMEOUT_MS`,
   `MARKTPLAATS_BROWSER_NAV_TIMEOUT_MS`, `MARKTPLAATS_BROWSER_MAX_IMAGES`.
 
-**Login**: geen inloggegevens worden ooit gelezen, opgeslagen of gecommit.
-Bij de eerste run (of een verlopen sessie) zet de run-status zichzelf op
+**Login**: standaard geen inloggegevens in code/git. Zonder
+`MARKTPLAATS_USERNAME`/`MARKTPLAATS_PASSWORD` zet de run-status zichzelf op
 `waiting_login`, wacht tot je handmatig bent ingelogd in het geopende
 venster, en gaat dan verder — die sessie blijft daarna bewaard in het
-lokale profiel.
+profiel. Zet je beide env vars wél (bv. omdat je de test alleen via noVNC op
+je telefoon bekijkt, waar zelf inloggen in het externe venster onhandig is),
+dan vult `attemptAutoLogin()` het echte inlogformulier automatisch in zodra
+er geen geldige sessie is — alleen als env var, nooit hardcoded, en de
+bestaande handmatige flow blijft de fallback als het formulier niet
+gevonden wordt.
 
 **Velden/selectors** staan in `selectors.ts` en zijn bewust generiek
 (label/role-gebaseerd; CSS/XPath alleen als laatste fallback). Labels waarvan

@@ -63,6 +63,15 @@ export interface BrowserTestConfig {
   loginTimeoutMs: number;
   navigationTimeoutMs: number;
   maxImages: number;
+  /**
+   * Optional: when both are set, ensureLoggedIn() fills and submits the real
+   * Marktplaats login form itself instead of waiting for a human — needed to
+   * run this from a phone (typing into a remote noVNC session on mobile is
+   * painful). Only ever read from env vars, never hardcoded or logged.
+   * Omit either one to keep the original manual-login behaviour.
+   */
+  username: string | null;
+  password: string | null;
 }
 
 export function getBrowserTestConfig(): BrowserTestConfig {
@@ -81,6 +90,8 @@ export function getBrowserTestConfig(): BrowserTestConfig {
     loginTimeoutMs: envNumber("MARKTPLAATS_BROWSER_LOGIN_TIMEOUT_MS", 5 * 60 * 1000),
     navigationTimeoutMs: envNumber("MARKTPLAATS_BROWSER_NAV_TIMEOUT_MS", 30 * 1000),
     maxImages: envNumber("MARKTPLAATS_BROWSER_MAX_IMAGES", 10),
+    username: process.env.MARKTPLAATS_USERNAME?.trim() || null,
+    password: process.env.MARKTPLAATS_PASSWORD?.trim() || null,
   };
 }
 

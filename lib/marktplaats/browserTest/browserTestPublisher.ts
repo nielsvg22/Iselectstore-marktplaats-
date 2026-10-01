@@ -247,13 +247,17 @@ export class MarktplaatsBrowserTestPublisher {
   }
 
   /**
-   * No credentials are ever stored in code. If there is no valid session the
-   * browser simply waits (default 5 min) for a manual login; the persistent
-   * profile stores it for every next run.
+   * No credentials are ever stored in code. With MARKTPLAATS_USERNAME /
+   * MARKTPLAATS_PASSWORD set (env vars only — see config.ts) this fills and
+   * submits the real login form itself once; without them it falls back to
+   * the original behaviour of simply waiting (default 5 min) for a manual
+   * login. The persistent profile stores the session either way, so this
+   * only ever runs again after the profile is wiped/expired.
    */
   private async ensureLoggedIn(page: Page): Promise<void> {
     const deadline = Date.now() + this.config.loginTimeoutMs;
     let waitingLogged = false;
+    let autoLoginAttempted = false;
 
     for (;;) {
       if (await this.isLoggedIn(page)) {
@@ -262,6 +266,12 @@ export class MarktplaatsBrowserTestPublisher {
           await page.goto(this.config.placementUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
         }
         return;
+      }
+
+      if (!autoLoginAttempted && this.config.username && this.config.password) {
+        autoLoginAttempted = true;
+        await this.attemptAutoLogin(page, this.config.username, this.config.password);
+        continue; // re-check isLoggedIn() immediately with the loop's top
       }
 
       if (Date.now() > deadline) {
@@ -282,6 +292,49 @@ export class MarktplaatsBrowserTestPublisher {
         });
       }
       await page.waitForTimeout(2000);
+    }
+  }
+
+  /**
+   * Fills and submits the real Marktplaats login form with
+   * MARKTPLAATS_USERNAME / MARKTPLAATS_PASSWORD. Best-effort and silent on
+   * failure — isLoggedIn() is re-checked by the caller's loop either way, so
+   * a login-page layout change degrades to the normal manual-login wait
+   * rather than crashing the run.
+   */
+  private async attemptAutoLogin(page: Page, username: string, password: string): Promise<void> {
+    this.info("Login", "Automatisch inloggen met MARKTPLAATS_USERNAME/MARKTPLAATS_PASSWORD…");
+    try {
+      if (!/\/login|inloggen|signin|\/auth/i.test(page.url())) {
+        await page.goto(`${this.config.baseUrl}/inloggen`, { waitUntil: "domcontentloaded" }).catch(() => {});
+      }
+
+      const usernameField = page
+        .getByLabel(/e-?mail|gebruikersnaam|inlognaam/i)
+        .or(page.getByPlaceholder(/e-?mail|gebruikersnaam/i))
+        .or(page.locator('input[type="email"], input[name*="email" i], input[name*="username" i]'))
+        .first();
+      const passwordField = page
+        .getByLabel(/wachtwoord/i)
+        .or(page.getByPlaceholder(/wachtwoord/i))
+        .or(page.locator('input[type="password"]'))
+        .first();
+
+      await usernameField.waitFor({ state: "visible", timeout: this.config.navigationTimeoutMs });
+      await usernameField.fill(username);
+      await passwordField.waitFor({ state: "visible", timeout: 5000 });
+      await passwordField.fill(password);
+
+      const submit = page
+        .getByRole("button", { name: /inloggen|log\s*in|aanmelden/i })
+        .first();
+      await submit.click({ timeout: 5000 }).catch(async () => {
+        await passwordField.press("Enter");
+      });
+
+      await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => {});
+    } catch (err) {
+      this.warn("Login", `Automatisch inloggen mislukt (${this.errMsg(err)}) — val terug op handmatig inloggen.`);
     }
   }
 
