@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AIRecognitionPanel } from "../AIRecognitionPanel";
 
 type CheckStatus = "ok" | "warning" | "error";
@@ -9,6 +9,35 @@ interface ValidationCheck {
   label: string;
   status: CheckStatus;
   detail?: string;
+}
+
+type BrowserFieldStatusKind = "ok" | "warning" | "error" | "info";
+
+interface BrowserFieldStatus {
+  field: string;
+  status: BrowserFieldStatusKind;
+  detail?: string;
+}
+
+interface BrowserTestRun {
+  runId: string;
+  shopifyProductId: string;
+  state: "queued" | "waiting_login" | "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  title?: string;
+  message?: string;
+  stoppedBeforeSubmit: boolean;
+  postedUrl?: string;
+  statuses: BrowserFieldStatus[];
+}
+
+interface BrowserTestConfig {
+  enabled: boolean;
+  allowSubmit: boolean;
+  apiConfigured: boolean;
+  placementUrl: string;
+  profileDir: string;
 }
 
 interface AttributeMappingResult {
@@ -34,27 +63,7 @@ interface ProductPreview {
   payloadPreview: { priceModel: { askingPrice?: number } };
 }
 
-interface FieldFillResult {
-  key: string;
-  label: string;
-  status: "filled" | "selected" | "not_found" | "skipped" | "error";
-  detail?: string;
-}
-
-interface BrowserTestResult {
-  startedAt: string;
-  allowSubmit: boolean;
-  stoppedBeforeSubmit: boolean;
-  fieldResults: FieldFillResult[];
-  imagesUploaded: number;
-  imagesFailed: number;
-  warnings: string[];
-  errors: string[];
-  pageUrl: string | null;
-}
-
 const statusIcon: Record<CheckStatus, string> = { ok: "✅", warning: "⚠", error: "❌" };
-const fieldFillIcon: Record<FieldFillResult["status"], string> = { filled: "✓", selected: "✓", not_found: "⚠", skipped: "—", error: "❌" };
 const attrStatusIcon: Record<string, string> = {
   mapped: "✅",
   missing_value: "—",
@@ -63,15 +72,73 @@ const attrStatusIcon: Record<string, string> = {
   value_not_allowed: "❌",
 };
 
+const browserStatusIcon: Record<BrowserFieldStatusKind, string> = {
+  ok: "✓",
+  warning: "⚠",
+  error: "✗",
+  info: "ℹ",
+};
+
+const browserStateLabel: Record<BrowserTestRun["state"], string> = {
+  queued: "wordt gestart…",
+  waiting_login: "wacht op handmatige login",
+  running: "bezig met invullen…",
+  done: "klaar",
+  failed: "mislukt",
+};
+
 export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyProductId: string; productType: string }) {
   const [preview, setPreview] = useState<ProductPreview | null>(null);
   const [payload, setPayload] = useState<unknown>(null);
   const [fullTestResult, setFullTestResult] = useState<{ passed: boolean; steps: { label: string; ok: boolean; detail?: string }[]; mock: boolean } | null>(null);
   const [publishResult, setPublishResult] = useState<{ advertisementId: string; mock: boolean } | null>(null);
-  const [browserTestResult, setBrowserTestResult] = useState<BrowserTestResult | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAdPreview, setShowAdPreview] = useState(false);
+  const [browserConfig, setBrowserConfig] = useState<BrowserTestConfig | null>(null);
+  const [browserRunId, setBrowserRunId] = useState<string | null>(null);
+  const [browserRun, setBrowserRun] = useState<BrowserTestRun | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/marktplaats/browser-test")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setBrowserConfig(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!browserRunId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/marktplaats/browser-test?runId=${browserRunId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (cancelled) return;
+          setBrowserRun(data.run);
+          if (!data.active) return;
+        }
+      } catch {
+        /* keep polling while the run is active */
+      }
+      timer = setTimeout(poll, 1500);
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [browserRunId]);
 
   async function call(url: string, key: string) {
     setLoading(key);
@@ -124,9 +191,10 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
   }
 
   async function browserTest() {
-    setBrowserTestResult(null);
+    setBrowserRun(null);
+    setBrowserRunId(null);
     const data = await call("/api/marktplaats/browser-test", "browsertest");
-    if (data) setBrowserTestResult(data.result);
+    if (data?.runId) setBrowserRunId(data.runId);
   }
 
   return (
@@ -143,22 +211,42 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
         <button onClick={showAdPreviewCard} disabled={loading !== null} style={btnStyle()}>
           {loading === "adpreview" ? "Bezig…" : "Voorbeeld advertentie"}
         </button>
+        <button
+          onClick={browserTest}
+          disabled={loading !== null || browserConfig?.enabled === false}
+          title={
+            browserConfig?.enabled === false
+              ? "Zet MARKTPLAATS_BROWSER_TEST=true in .env.local om deze test te activeren."
+              : "Opent het echte Marktplaats-formulier en vult de Shopify-gegevens in."
+          }
+          style={btnStyle()}
+        >
+          {loading === "browsertest" ? "Bezig…" : "Test op Marktplaats"}
+        </button>
         <button onClick={fullApiTest} disabled={loading !== null} style={btnStyle()}>
           {loading === "fulltest" ? "Bezig…" : "Volledige Marktplaats API-test"}
         </button>
-        <button onClick={browserTest} disabled={loading !== null} style={btnStyle()}>
-          {loading === "browsertest" ? "Browser openen…" : "Test op Marktplaats"}
-        </button>
-        <button onClick={publish} disabled={loading !== null || (preview ? !preview.validation.publishable : false)} style={btnStyle(true)}>
+        <button
+          onClick={publish}
+          disabled={loading !== null || browserConfig?.apiConfigured === false || (preview ? !preview.validation.publishable : false)}
+          title={browserConfig?.apiConfigured === false ? "Geen Marktplaats API-configuratie gevonden." : undefined}
+          style={btnStyle(true)}
+        >
           {loading === "publish" ? "Bezig…" : "Publiceren via API"}
         </button>
       </div>
-      <p style={{ fontSize: 12.5, color: "#6b7280", margin: "-6px 0 0" }}>
-        &quot;Test op Marktplaats&quot; opent het echte Marktplaats-formulier in een browservenster en vult gegevens automatisch in.
-        De advertentie wordt <b>niet</b> automatisch geplaatst — dat doe je zelf, handmatig, in dat venster.
-      </p>
+
+      <div style={{ fontSize: 13, color: "#6b7280", marginTop: -6 }}>
+        <b>Test op Marktplaats</b> opent het echte Marktplaats-formulier en vult gegevens automatisch in.{" "}
+        {browserConfig?.allowSubmit
+          ? "De testadvertentie wordt hierna geplaatst (MARKTPLAATS_BROWSER_ALLOW_SUBMIT=true) — verwijder die na afloop zelf uit Mijn Advertenties."
+          : `De advertentie wordt niet automatisch geplaatst${browserConfig ? " (MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false)" : ""}.`}
+        {browserConfig?.enabled === false && " Test staat uit — zet MARKTPLAATS_BROWSER_TEST=true in .env.local."}
+      </div>
 
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: 12, color: "#991b1b" }}>{error}</div>}
+
+      {browserRun && <BrowserTestStatusCard run={browserRun} />}
 
       {preview && showAdPreview && <MarktplaatsAdPreview preview={preview} />}
 
@@ -223,47 +311,6 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
         </div>
       )}
 
-      {browserTestResult && (
-        <div style={cardStyle()}>
-          <h3 style={{ marginTop: 0 }}>Test op Marktplaats — resultaat</h3>
-          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 10 }}>
-            Gestart: {new Date(browserTestResult.startedAt).toLocaleTimeString("nl-NL")}
-            {browserTestResult.pageUrl ? ` · Pagina: ${browserTestResult.pageUrl}` : ""}
-          </div>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {browserTestResult.fieldResults.map((r, i) => (
-              <li key={`${r.key}-${i}`} style={{ padding: "4px 0", fontSize: 14 }}>
-                {fieldFillIcon[r.status]} {r.label}
-                {r.detail ? ` ${r.detail}` : ""}
-              </li>
-            ))}
-          </ul>
-          {browserTestResult.warnings.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <h4 style={{ margin: "0 0 4px", fontSize: 13 }}>Meldingen</h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 13, color: "#92400e" }}>
-                {browserTestResult.warnings.map((w, i) => (
-                  <li key={i}>⚠ {w}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {browserTestResult.errors.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              <h4 style={{ margin: "0 0 4px", fontSize: 13 }}>Fouten</h4>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 13, color: "#991b1b" }}>
-                {browserTestResult.errors.map((e, i) => (
-                  <li key={i}>❌ {e}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div style={{ marginTop: 10, fontWeight: 700, color: "#1f3049" }}>
-            Gestopt vóór publicatie — controleer en rond handmatig af in het geopende browservenster.
-          </div>
-        </div>
-      )}
-
       {publishResult && (
         <div style={{ ...cardStyle(), borderColor: "#16a34a" }}>
           ✅ Gepubliceerd{publishResult.mock ? " (mock)" : ""} — advertentie-ID: <code>{publishResult.advertisementId}</code>
@@ -276,6 +323,69 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
 function formatPrice(cents: number | undefined): string {
   if (!cents && cents !== 0) return "";
   return new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(cents);
+}
+
+/**
+ * Live debug view of the local Playwright test: which field was filled, which
+ * selector matched and which field Marktplaats did not offer.
+ */
+function BrowserTestStatusCard({ run }: { run: BrowserTestRun }) {
+  const isActive = run.state === "queued" || run.state === "running" || run.state === "waiting_login";
+  const accent = run.state === "failed" ? "#dc2626" : isActive ? "#b45309" : "#16a34a";
+
+  return (
+    <div style={{ ...cardStyle(), borderColor: accent }}>
+      <h3 style={{ marginTop: 0 }}>
+        Test op Marktplaats{run.title ? ` — ${run.title}` : ""}{" "}
+        <span style={{ fontSize: 13, fontWeight: 400, color: "#6b7280" }}>
+          · {browserStateLabel[run.state]}
+          {isActive ? "…" : ""}
+        </span>
+      </h3>
+
+      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {run.statuses.map((s, i) => (
+          <li key={`${s.field}-${i}`} style={{ padding: "3px 0", fontSize: 14, display: "flex", gap: 8 }}>
+            <span
+              aria-hidden
+              style={{
+                width: 14,
+                flex: "0 0 14px",
+                fontWeight: 700,
+                color: s.status === "ok" ? "#16a34a" : s.status === "warning" ? "#b45309" : s.status === "error" ? "#dc2626" : "#6b7280",
+              }}
+            >
+              {browserStatusIcon[s.status]}
+            </span>
+            <span>
+              <b>{s.field}</b>
+              {s.detail ? ` ${s.detail}` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {run.message && (
+        <div style={{ marginTop: 8, fontSize: 14, color: accent, fontWeight: 600 }}>{run.message}</div>
+      )}
+
+      {run.postedUrl && (
+        <div style={{ marginTop: 10, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: 10, fontSize: 14, color: "#065f46" }}>
+          Testadvertentie staat online:{" "}
+          <a href={run.postedUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 700 }}>
+            {run.postedUrl}
+          </a>
+          <div style={{ marginTop: 4 }}>Verwijder hem na afloop zelf uit Mijn Advertenties.</div>
+        </div>
+      )}
+
+      {run.stoppedBeforeSubmit && !isActive && (
+        <div style={{ marginTop: 10, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: 10, fontSize: 14, color: "#065f46" }}>
+          De advertentie is <b>niet geplaatst</b>. De browser blijft open zodat je het formulier handmatig kunt controleren.
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**

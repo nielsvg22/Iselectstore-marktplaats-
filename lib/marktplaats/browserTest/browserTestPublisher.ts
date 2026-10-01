@@ -1,306 +1,1287 @@
-// MarktplaatsBrowserTestPublisher — Playwright-based form-fill test against
-// the REAL marktplaats.nl site. This is explicitly a mapping-verification
-// tool, NOT the production publish path (that is lib/marktplaats/publishService.ts,
-// the future official-API MarktplaatsApiPublisher). It must never be able to
-// place a real advertisement by accident — see assertSubmitGuard() below,
-// which is checked independently of whatever selector logic exists.
-//
-// Local/dev-only by design: launches a headed, visible Chromium window so a
-// human can inspect the filled-in form. Does not run on Vercel/Coolify.
-//
-// Uses a persistent browser profile (launchPersistentContext) so a human
-// logging into Marktplaats once keeps that session for subsequent runs —
-// no credentials are ever read, stored, or committed by this code.
+import fs from "node:fs";
+import path from "node:path";
+import type { BrowserContext, Locator, Page } from "playwright";
 
-import { chromium, BrowserContext, Page } from "playwright";
-import { mkdir } from "fs/promises";
-import { BrowserFieldPlanItem, BrowserTestPlan, BrowserTestResult, FieldFillResult } from "./types";
-import { downloadImages, cleanupImages } from "./imageDownloader";
-
-const FIELD_TIMEOUT_MS = 4000;
-const POST_AD_ENTRY_PATTERN = /plaats.*advertentie/i;
-
-function env(key: string, fallback = ""): string {
-  return process.env[key]?.trim() || fallback;
-}
-
-function isBrowserTestEnabled(): boolean {
-  return env("MARKTPLAATS_BROWSER_TEST").toLowerCase() === "true";
-}
-
-function isSubmitAllowed(): boolean {
-  return env("MARKTPLAATS_BROWSER_ALLOW_SUBMIT").toLowerCase() === "true";
-}
+import { AdvertisementDraft, DraftField } from "../service";
+import {
+  BrowserTestConfig,
+  assertSubmitAllowed,
+  ensureDir,
+  getBrowserTestConfig,
+  stopBeforeSubmit,
+  SubmitNotAllowedError,
+} from "./config";
+import { BrowserTestRun, compactMessage, recordStatus, setState } from "./status";
+import {
+  CORE_FIELD_SELECTORS,
+  SelectorCandidate,
+  buildAttributeCandidates,
+  escapeRegExp,
+  isRegexPattern,
+  selectValueCandidates,
+  toRegExp,
+} from "./selectors";
+import {
+  ImageDownloadResult,
+  cleanupImageDir,
+  cleanupStaleImageDirs,
+  downloadImagesForBrowserTest,
+} from "./imageStore";
+import { getActiveContext, setActiveContext } from "./session";
 
 /**
- * Hard guard: independent of whatever selector/click logic exists elsewhere
- * in this file. Any future code path that would perform the final
- * "plaats advertentie" submit MUST call this first and MUST stop if it
- * throws. Never remove this call to "simplify" the flow.
+ * MarktplaatsBrowserTestPublisher — LOCAL/DEV-ONLY Playwright test.
+ *
+ * It opens the real Marktplaats placement form and fills it with the data
+ * produced by MarktplaatsService (the same mapping the official API will use)
+ * so we can verify the mapping against the real DOM.
+ *
+ * It NEVER replaces the official API publisher, and it NEVER publishes unless
+ * MARKTPLAATS_BROWSER_ALLOW_SUBMIT is explicitly true — enforced by
+ * assertSubmitAllowed() directly in front of the publish action.
  */
-function assertSubmitGuard(): void {
-  if (!isSubmitAllowed()) {
-    throw new Error(
-      "MARKTPLAATS_BROWSER_ALLOW_SUBMIT staat niet op 'true' — automatisch publiceren via de browsertest is hard geblokkeerd. " +
-        "Dit is een bewuste veiligheidsgrens, geen bug."
-    );
+
+interface ResolvedLocator {
+  locator: Locator;
+  candidate: SelectorCandidate;
+}
+
+type PublishOutcome =
+  | { kind: "success"; url: string }
+  | { kind: "payment"; url: string }
+  | { kind: "validation"; url: string; problems: string[] }
+  | { kind: "timeout"; url: string };
+
+const ADVANCE_CANDIDATES: SelectorCandidate[] = [
+  { strategy: "role", role: "button", pattern: "/^(volgende|doorgaan|verder|verder gaan|next)/i" },
+];
+
+const SUBMIT_CANDIDATES: SelectorCandidate[] = [
+  { strategy: "role", role: "button", pattern: "/^(plaats advertentie|advertentie plaatsen|advertentie publiceren|plaatsen|publiceren)/i" },
+  { strategy: "label", pattern: "/^(plaats advertentie|advertentie plaatsen|advertentie publiceren)/i" },
+  { strategy: "css", pattern: 'button[type="submit"]', note: "CSS fallback: button[type=submit]" },
+];
+
+/** Verplichte verkoper-velden op het detailformulier. */
+const POSTCODE_CANDIDATES: SelectorCandidate[] = [
+  { strategy: "testid", pattern: "syi-postcode-input" },
+  { strategy: "css", pattern: "#postCode", note: "CSS fallback: #postCode" },
+  { strategy: "css", pattern: 'input[name="contactInformation.postCode"]', note: "CSS fallback: name" },
+  { strategy: "label", pattern: "/^Postcode/i" },
+];
+
+/** "Hoe wil je adverteren?" — alleen de GRATIS vorm mag ooit worden gekozen. */
+const FREE_BUNDLE_CANDIDATES: SelectorCandidate[] = [
+  { strategy: "css", pattern: "#feature-FREE", note: "CSS: vrije bundle-radio" },
+  { strategy: "testid", pattern: "bundle-option-FREE" },
+];
+
+/** Betaalde vormen — deze mogen nooit worden aangeklikt. */
+const PAID_BUNDLE_PATTERN = /\b(plus|premium|dagtopper|blikvanger|featured)\b/i;
+
+const FINAL_CONTROL_PATTERN =
+  /plaats advertentie|advertentie plaatsen|advertentie publiceren|advertentie online|direct plaatsen|verkoop nu|betaal|bevestig/i;
+
+/** Text that only appears once the advertisement is actually online. */
+const PUBLISH_SUCCESS_PATTERN =
+  /je advertentie (is|staat|wordt)|advertentie (is|staat) (geplaatst|online)|geplaatst in de categorie|gefeliciteerd met je advertentie|advertentie succesvol/i;
+
+/** URL shapes of a finished placement (item page, seller view or "mijn advertenties"). */
+const PUBLISHED_URL_PATTERN = /\/p\/\d+|\/seller\/view\/|\/my-account\/sell|\/advertenties\//;
+
+const PAYMENT_URL_PATTERN = /\/payments\/|\/checkout\/|ideal\.nl/i;
+
+const PAYMENT_HEADING_PATTERN = /^betaal|^betalen|betaalmethode|winkelwagen/i;
+
+const MAX_ADVANCES = 4;
+
+export class MarktplaatsBrowserTestPublisher {
+  private readonly config: BrowserTestConfig;
+  private imageDir: string | null = null;
+  private unfilled: string[] = [];
+  private advances = 0;
+  private debugFiles: string[] = [];
+
+  constructor(private readonly run: BrowserTestRun) {
+    this.config = getBrowserTestConfig();
   }
-}
 
-function profileDir(): string {
-  return env("MARKTPLAATS_BROWSER_PROFILE_DIR", ".marktplaats-browser-profile");
-}
+  // ---------------------------------------------------------------- status
 
-function baseUrl(): string {
-  return env("MARKTPLAATS_BASE_URL", "https://www.marktplaats.nl");
-}
-
-async function findPostAdEntryAndNavigate(page: Page, log: string[]): Promise<boolean> {
-  const explicitListingUrl = env("MARKTPLAATS_LISTING_URL");
-  if (explicitListingUrl) {
-    log.push(`MARKTPLAATS_LISTING_URL ingesteld — navigeer direct naar ${explicitListingUrl}`);
-    await page.goto(explicitListingUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
-    return true;
+  private ok(field: string, detail?: string) {
+    recordStatus(this.run, { field, status: "ok", detail });
   }
 
-  await page.goto(baseUrl(), { waitUntil: "domcontentloaded", timeout: 20000 });
+  private warn(field: string, detail?: string) {
+    recordStatus(this.run, { field, status: "warning", detail });
+  }
 
-  const candidates = [
-    page.getByRole("link", { name: POST_AD_ENTRY_PATTERN }),
-    page.getByRole("button", { name: POST_AD_ENTRY_PATTERN }),
-    page.getByText(POST_AD_ENTRY_PATTERN, { exact: false }),
-  ];
+  private error(field: string, detail?: string) {
+    recordStatus(this.run, { field, status: "error", detail });
+  }
 
-  for (const candidate of candidates) {
+  private info(field: string, detail?: string) {
+    recordStatus(this.run, { field, status: "info", detail });
+  }
+
+  /** Playwright errors are huge — surface one readable line instead. */
+  private errMsg(err: unknown): string {
+    return compactMessage(err instanceof Error ? err.message : String(err));
+  }
+
+  // ----------------------------------------------------------------- main
+
+  async runDraft(draft: AdvertisementDraft): Promise<void> {
+    if (!this.config.enabled) {
+      throw new Error("MARKTPLAATS_BROWSER_TEST staat niet op true — de browsertest is uitgeschakeld.");
+    }
+
+    cleanupStaleImageDirs();
+    setState(this.run, "running", "Browser starten");
+
+    const context = await this.ensureContext();
+    const page = await this.resolvePage(context);
+
     try {
-      const el = candidate.first();
-      await el.waitFor({ state: "visible", timeout: 5000 });
-      await el.click();
-      await page.waitForLoadState("domcontentloaded", { timeout: 20000 });
-      log.push('"Plaats advertentie"-link gevonden en aangeklikt vanaf de homepage.');
-      return true;
-    } catch {
-      // try next candidate
+      await this.openPlacementPage(page);
+      await this.snapshot(page, "00-plaatsingspagina");
+      await this.ensureLoggedIn(page);
+      await this.snapshot(page, "01-ingelogd");
+
+      // De echte site is een wizard: stap 1 kent ALLEEN een titelveld en drie
+      // cascaderende rubriek-dropdowns. Alles wat daar niet bestaat mag dus
+      // pas ná "Verder" worden ingevuld.
+      await this.fillStepOne(page, draft);
+      const advanced = await this.selectCategoryAndAdvance(page, draft);
+      await this.snapshot(page, "02-detailformulier");
+
+      if (!advanced) {
+        // Veilig stoppen: het detailformulier is niet bereikt, dus er valt
+        // niets te vullen. Browser blijft open voor handmatige controle.
+        this.run.stoppedBeforeSubmit = true;
+        recordStatus(this.run, {
+          field: "Controle",
+          status: "info",
+          detail: `Browser staat open voor handmatige controle${this.debugSuffix()}`,
+        });
+        setState(this.run, "done", "Detailformulier niet bereikt — handmatig verdergaan");
+        return;
+      }
+
+      await this.uploadImages(page, draft);
+      await this.fillCoreFields(page, draft);
+      await this.fillStructuredFields(page, draft);
+      await this.fillSellerFields(page);
+
+      await this.maybeAdvance(page);
+      await this.snapshot(page, "03-formulier-gevuld");
+
+      await this.stopBeforeSubmitStep(page);
+    } finally {
+      // Never close the browser: it must stay open for manual inspection.
+      await cleanupImageDir(this.imageDir);
+      this.imageDir = null;
+      await page.bringToFront().catch(() => {});
     }
   }
 
-  log.push(
-    'Kon geen "Plaats advertentie"-link vinden op de homepage. Navigeer handmatig naar de juiste pagina in het geopende venster, ' +
-      "of zet MARKTPLAATS_LISTING_URL zodra je de echte URL kent."
-  );
-  return false;
-}
+  // ------------------------------------------------------------- browser
 
-/** True if this looks like Marktplaats' login screen rather than the posting form. */
-async function looksLikeLoginScreen(page: Page): Promise<boolean> {
-  try {
-    const passwordField = page.locator('input[type="password"]').first();
-    return await passwordField.isVisible({ timeout: 1000 });
-  } catch {
+  private async ensureContext(): Promise<BrowserContext> {
+    const existing = getActiveContext();
+    if (existing) {
+      this.info("Browser", "Bestaande browsessie hergebruikt");
+      return existing;
+    }
+
+    const { chromium } = await import("playwright");
+    ensureDir(this.config.profileDir);
+
+    const launch = async (userDataDir: string) =>
+      chromium.launchPersistentContext(userDataDir, {
+        headless: this.config.headless,
+        channel: this.config.channel ?? undefined,
+        viewport: { width: 1440, height: 960 },
+        locale: "nl-NL",
+        args: ["--disable-blink-features=AutomationControlled"],
+      });
+
+    let context: BrowserContext;
+    try {
+      context = await launch(this.config.profileDir);
+    } catch (err) {
+      // Profile likely locked by a previous dev-server process — fall back to
+      // a throw-away profile (the user simply has to log in once more).
+      const fallback = path.join(this.config.profileDir, `tmp-${process.pid}-${Date.now()}`);
+      this.warn(
+        "Browserprofiel",
+        `Kon het vaste profiel niet openen (${this.errMsg(err)}) — tijdelijk profiel gebruikt.`
+      );
+      ensureDir(fallback);
+      context = await launch(fallback);
+    }
+
+    context.on("close", () => setActiveContext(null));
+    setActiveContext(context);
+    this.ok("Browser", `Playwright gestart (${this.config.headless ? "headless" : "headed"})`);
+    return context;
+  }
+
+  private async resolvePage(context: BrowserContext): Promise<Page> {
+    const pages = context.pages();
+    const page = pages[0] ?? (await context.newPage());
+    page.setDefaultTimeout(this.config.navigationTimeoutMs);
+    page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
+    return page;
+  }
+
+  private async openPlacementPage(page: Page): Promise<void> {
+    this.info("Plaatsingspagina", `Openen ${this.config.placementUrl}`);
+    try {
+      await page.goto(this.config.placementUrl, { waitUntil: "domcontentloaded" });
+      this.ok("Plaatsingspagina", page.url());
+    } catch (err) {
+      this.error("Plaatsingspagina", this.errMsg(err));
+      throw err;
+    }
+  }
+
+  /**
+   * No credentials are ever stored in code. If there is no valid session the
+   * browser simply waits (default 5 min) for a manual login; the persistent
+   * profile stores it for every next run.
+   */
+  private async ensureLoggedIn(page: Page): Promise<void> {
+    const deadline = Date.now() + this.config.loginTimeoutMs;
+    let waitingLogged = false;
+
+    for (;;) {
+      if (await this.isLoggedIn(page)) {
+        this.ok("Login", waitingLogged ? "Ingelogd — sessie lokaal opgeslagen in het Playwright-profiel" : "Bestaande sessie hergebruikt");
+        if (/login|inloggen|signin/i.test(page.url())) {
+          await page.goto(this.config.placementUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
+        }
+        return;
+      }
+
+      if (Date.now() > deadline) {
+        this.error(
+          "Login",
+          `Niet ingelogd binnen ${Math.round(this.config.loginTimeoutMs / 1000)}s. Log handmatig in en start de test opnieuw.`
+        );
+        throw new Error("Geen geldige Marktplaats-sessie — log handmatig in en probeer opnieuw.");
+      }
+
+      if (!waitingLogged) {
+        waitingLogged = true;
+        setState(this.run, "waiting_login", "Wacht op handmatige login in de geopende browser");
+        recordStatus(this.run, {
+          field: "Login",
+          status: "info",
+          detail: "Nog niet ingelogd — log nu handmatig in; de sessie wordt daarna automatisch herbruikt.",
+        });
+      }
+      await page.waitForTimeout(2000);
+    }
+  }
+
+  private async isLoggedIn(page: Page): Promise<boolean> {
+    const url = page.url();
+    if (/\/login|inloggen|signin|\/auth/i.test(url)) return false;
+    try {
+      const accountMarkers = await page
+        .locator('a[href*="mijn-marktplaats" i], a[href*="/account" i], [data-testid*="profile" i], [data-testid*="account" i]')
+        .count();
+      if (accountMarkers > 0) return true;
+      const loginMarkers = await page
+        .locator('a[href*="login" i]:visible, button:has-text("Inloggen"):visible, a:has-text("Inloggen"):visible')
+        .count();
+      return loginMarkers === 0;
+    } catch {
+      return true;
+    }
+  }
+
+  // ------------------------------------------------------------- category
+
+  /** Stap 1 van de wizard: het enige veld dat daar bestaat is de titel. */
+  private async fillStepOne(page: Page, draft: AdvertisementDraft): Promise<void> {
+    await this.fillOne(page, {
+      label: "Titel (rubriekstap)",
+      value: draft.title,
+      kind: "text",
+      candidates: CORE_FIELD_SELECTORS.titleStep1.candidates,
+      expects: true,
+      timeoutMs: 4000,
+    });
+
+    // The controlled input can drop its value when React re-renders, and the
+    // rubric dropdowns only enable once the title is really there.
+    const veld = page.locator("#TextField-vulEenTitelIn").first();
+    for (let poging = 0; poging < 3; poging++) {
+      const huidig = await veld.inputValue().catch(() => "");
+      if (huidig.trim().length > 0) return;
+      await this.fillText(page, veld, draft.title);
+      await page.waitForTimeout(500);
+    }
+    if ((await veld.inputValue().catch(() => "")).trim().length === 0) {
+      this.warn("Titel (rubriekstap)", "Titel blijft leeg — de rubriekstap kan hierdoor niet doorgaan.");
+    }
+  }
+
+  /**
+   * Stap 1: rubriek kiezen via de drie cascaderende native <select>s
+   * (#cat_sel_1/2/3) en daarna doorklikken naar het detailformulier.
+   * Geeft false terug wanneer het detailformulier niet bereikt kon worden.
+   */
+  private async selectCategoryAndAdvance(page: Page, draft: AdvertisementDraft): Promise<boolean> {
+    if (!draft.category) {
+      this.error("Categorie", "Geen categoriemapping voor dit producttype.");
+      return false;
+    }
+
+    const steps: { id: string; naam: string; kandidaten: string[]; verplicht: boolean; wacht: number }[] = [
+      {
+        id: "#cat_sel_1",
+        naam: "Rubriek (L1)",
+        kandidaten: this.nameCandidates(draft.category.l1CategoryName),
+        verplicht: true,
+        wacht: 20000,
+      },
+      {
+        id: "#cat_sel_2",
+        naam: "Subrubriek (L2)",
+        kandidaten: this.nameCandidates(draft.category.l2CategoryName),
+        verplicht: true,
+        wacht: 12000,
+      },
+      { id: "#cat_sel_3", naam: "Type (L3)", kandidaten: this.typeCandidates(draft), verplicht: false, wacht: 8000 },
+    ];
+
+    let gekozen = 0;
+    for (const step of steps) {
+      const select = page.locator(step.id).first();
+      // The rubric dropdowns hydrate separately from the title field, so a
+      // single isVisible() check races against React — poll instead.
+      const aanwezig = await this.waitForVisible(page, select, step.wacht);
+      if (!aanwezig) {
+        if (step.verplicht) {
+          this.error(
+            step.naam,
+            `Dropdown ${step.id} niet geladen binnen ${Math.round(step.wacht / 1000)}s (pagina: ${page.url()}).`
+          );
+        } else {
+          this.info(step.naam, "niet aanwezig op dit formulier (rubriek heeft dit niveau niet)");
+        }
+        continue;
+      }
+      await this.waitForOptionCount(page, select, 2, 8000);
+      const optie = await this.selectByText(select, step.kandidaten);
+      if (optie) {
+        gekozen += 1;
+        this.ok(step.naam, optie);
+        await page.waitForTimeout(800);
+      } else {
+        this.warn(
+          step.naam,
+          `geen passende optie gevonden voor "${step.kandidaten.join('", "')}" — ${await this.optionPreview(select)}`
+        );
+      }
+    }
+
+    if (gekozen === 0) {
+      this.error("Categorie", "Geen enkele rubriek kon geselecteerd worden.");
+      return false;
+    }
+
+    return this.advanceToDetails(page);
+  }
+
+  private async waitForVisible(page: Page, locator: Locator, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (await locator.isVisible().catch(() => false)) return true;
+      if (Date.now() >= deadline) return false;
+      await page.waitForTimeout(250).catch(() => {});
+    }
+  }
+
+  /** A cascade level is only usable once the previous level filled its options. */
+  private async waitForOptionCount(page: Page, select: Locator, min: number, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const count = await select
+        .evaluate((el) => (el as HTMLSelectElement).options.length)
+        .catch(() => 0);
+      if (count >= min) return true;
+      if (Date.now() >= deadline) return false;
+      await page.waitForTimeout(250).catch(() => {});
+    }
+  }
+
+  /** Splits a composite mapping name ("Mobiele telefoons | Apple") into candidates. */
+  private nameCandidates(name: string): string[] {
+    const parts = name
+      .split(/\s*[|>,/]\s*/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    return [...new Set([...parts, name.trim()].filter((p) => p.length > 0))];
+  }
+
+  /** Third-level candidates: L2 parts + manufacturer + "manufacturer part". */
+  private typeCandidates(draft: AdvertisementDraft): string[] {
+    const manufacturer = draft.fields.find((f) => f.key === "manufacturer_name")?.value ?? "";
+    const parts = this.nameCandidates(draft.category?.l2CategoryName ?? "");
+    const out = [...parts];
+    // "Apple macbooks" — Markplaats heeft voor MacBook een eigen L3 onder Laptops.
+    const typePlural = `${draft.productType.toLowerCase()}s`;
+    if (manufacturer) {
+      out.push(manufacturer);
+      for (const p of parts) out.push(`${manufacturer} ${p}`);
+      out.push(`${manufacturer} ${typePlural}`);
+    }
+    out.push(typePlural);
+    return [...new Set(out.filter((p) => p.length > 0))];
+  }
+
+  private async optionPreview(select: Locator): Promise<string> {
+    const texts = await select
+      .evaluate((el) => [...(el as HTMLSelectElement).options].map((o) => o.textContent?.trim() ?? ""))
+      .catch(() => [] as string[]);
+    return texts.filter(Boolean).length > 0
+      ? `beschikbaar: ${texts.filter(Boolean).slice(0, 12).join(", ")}`
+      : "geen opties geladen";
+  }
+
+  /** Exact → startsWith → contains, so a broad name still picks the right row. */
+  private async selectByText(select: Locator, candidates: string[]): Promise<string | null> {
+    const options = await select
+      .evaluate((el) =>
+        [...(el as HTMLSelectElement).options].map((o) => ({ value: o.value, text: (o.textContent ?? "").trim() }))
+      )
+      .catch(() => [] as { value: string; text: string }[]);
+    if (options.length === 0) return null;
+
+    const wanted = [...new Set(candidates.map((c) => c.trim().toLowerCase()).filter(Boolean))];
+    for (const test of [(t: string, o: string) => t === o, (t: string, o: string) => o.startsWith(t), (t: string, o: string) => o.includes(t)]) {
+      for (const w of wanted) {
+        const hit = options.find((o) => o.text && test(w, o.text.toLowerCase()));
+        if (hit && hit.value) {
+          await select.selectOption(hit.value);
+          return hit.text;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Klik "Verder" en wacht tot het detailformulier (foto's/details) geladen is.
+   * Fallback: laat Marktplaats zelf een rubriek voorstellen op basis van de titel.
+   */
+  private async advanceToDetails(page: Page): Promise<boolean> {
+    const knop = page.getByTestId("redirectToPlaceAd").first();
+    const knopZichtbaar = await knop.isVisible().catch(() => false);
+    if (knopZichtbaar) {
+      try {
+        await knop.click({ timeout: 6000 });
+        this.info("Volgende stap", '"Verder" aangeklikt');
+      } catch (err) {
+        this.warn("Volgende stap", `Doorklikken mislukt: ${this.errMsg(err)}`);
+      }
+    } else {
+      this.warn("Volgende stap", 'Knop "Verder" niet gevonden.');
+    }
+
+    if (await this.waitForStepTwo(page)) {
+      this.ok("Detailformulier", page.url());
+      return true;
+    }
+
+    // Fallback: "Vind categorie" laat Marktplaats de rubriek uit de titel kiezen.
+    const vind = page.getByTestId("findCategory").first();
+    if (await vind.isVisible().catch(() => false)) {
+      this.info("Categorie", 'Fallback: "Vind categorie" geprobeerd op basis van de titel.');
+      await vind.click({ timeout: 5000 }).catch(() => {});
+      if (await this.waitForStepTwo(page)) {
+        this.ok("Detailformulier", page.url());
+        return true;
+      }
+    }
+
+    this.error(
+      "Detailformulier",
+      `Het formulier met foto's/details is niet bereikt (pagina: ${page.url()}) — controleer rubriek en titel handmatig in het geopende venster.`
+    );
     return false;
   }
-}
 
-async function waitForManualLogin(page: Page, log: string[]): Promise<void> {
-  log.push("Login-scherm gedetecteerd — log handmatig in in het geopende browservenster. De sessie wordt daarna onthouden.");
-  const maxWaitMs = 5 * 60 * 1000;
-  const pollMs = 2000;
-  const start = Date.now();
-  while (Date.now() - start < maxWaitMs) {
-    await page.waitForTimeout(pollMs);
-    if (!(await looksLikeLoginScreen(page))) {
-      log.push("Login gedetecteerd als voltooid — ga verder.");
+  /**
+   * The rubric step hands over via a client-side redirect to
+   * /plaats/{l1}/{l3}?bucketId={l2}, which then hydrates the detail form.
+   *
+   * Note: never probe "any of these selectors" with .first().isVisible() — the
+   * detail form's file input is deliberately visually hidden, so it would win
+   * the .first() race and report "not visible" forever.
+   */
+  private async waitForStepTwo(page: Page): Promise<boolean> {
+    const rubriekPad = /\/plaats\/[^/?]+\/[^/?]+/;
+    await page
+      .waitForURL((url) => rubriekPad.test(url.pathname), { timeout: 20000, waitUntil: "domcontentloaded" })
+      .catch(() => {});
+    await page.waitForLoadState("load", { timeout: 15000 }).catch(() => {});
+
+    const marker = page.locator('#title_nl-NL, [data-testid="place-listing-submit-button"]').first();
+    try {
+      await marker.waitFor({ state: "attached", timeout: 25000 });
+    } catch {
+      return false;
+    }
+    if (!rubriekPad.test(new URL(page.url()).pathname)) return false;
+
+    const deadline = Date.now() + 10000;
+    for (;;) {
+      if (await page.locator("#title_nl-NL").first().isVisible().catch(() => false)) return true;
+      if (Date.now() >= deadline) return true; // form is in the DOM; fields may simply be folded in
+      await page.waitForTimeout(250).catch(() => {});
+    }
+  }
+
+  // -------------------------------------------------------------- images
+
+  private async uploadImages(page: Page, draft: AdvertisementDraft): Promise<void> {
+    if (draft.imageUrls.length === 0) {
+      this.warn("Afbeeldingen", "Geen productafbeeldingen gevonden in Shopify.");
       return;
     }
-  }
-  log.push("Nog steeds op het loginscherm na 5 minuten wachten — ga toch verder (velden invullen kan hierna mislukken).");
-}
 
-async function tryTextLikeField(page: Page, item: BrowserFieldPlanItem): Promise<FieldFillResult> {
-  const strategies: (() => ReturnType<Page["getByLabel"]>)[] = [];
-  for (const label of item.labels) {
-    strategies.push(() => page.getByLabel(label, { exact: false }));
-    strategies.push(() => page.getByPlaceholder(label, { exact: false }));
-    strategies.push(() => page.getByRole(item.kind === "textarea" ? "textbox" : "textbox", { name: label }));
-  }
-
-  for (const strategy of strategies) {
+    let download: ImageDownloadResult;
     try {
-      const locator = strategy().first();
-      await locator.waitFor({ state: "visible", timeout: FIELD_TIMEOUT_MS });
-      await locator.fill(item.value);
-      return { key: item.key, label: item.labels[0], status: "filled" };
-    } catch {
-      // try next strategy
+      download = await downloadImagesForBrowserTest(draft.imageUrls, this.run.runId);
+      this.imageDir = download.dir;
+    } catch (err) {
+      this.error("Afbeeldingen", `Downloaden mislukt: ${this.errMsg(err)}`);
+      return;
+    }
+
+    for (const failure of download.failures) {
+      this.warn("Afbeeldingen", `Kon downloaden niet ophalen: ${failure.error}`);
+    }
+    if (download.skipped.length > 0) {
+      this.info("Afbeeldingen", `${download.skipped.length} extra afbeelding(en) overgeslagen (max ${this.config.maxImages}).`);
+    }
+    if (download.files.length === 0) {
+      this.error("Afbeeldingen", "Geen afbeeldingen konden worden gedownload.");
+      return;
+    }
+
+    const resolved = await this.waitForResolve(page, CORE_FIELD_SELECTORS.images.candidates, 3000, false);
+    if (!resolved) {
+      this.error("Afbeeldingen", "Geen file-input (input[type=file]) gevonden op het formulier.");
+      return;
+    }
+
+    try {
+      await resolved.locator.setInputFiles(download.files.map((f) => f.filePath));
+      await page.waitForTimeout(2500);
+      this.ok("Afbeeldingen", `${download.files.length} afbeelding(en) toegevoegd`);
+    } catch (err) {
+      this.error("Afbeeldingen", `Uploaden mislukt: ${this.errMsg(err)}`);
     }
   }
 
-  return { key: item.key, label: item.labels[0], status: "not_found", detail: `Geen veld gevonden voor label(s): ${item.labels.join(", ")}` };
-}
+  // ---------------------------------------------------------- core fields
 
-async function trySelectField(page: Page, item: BrowserFieldPlanItem): Promise<FieldFillResult> {
-  const valuesToTry = [item.value, ...(item.valueSynonyms ?? [])];
+  private async fillCoreFields(page: Page, draft: AdvertisementDraft): Promise<void> {
+    await this.fillOne(page, {
+      label: "Titel",
+      value: draft.title,
+      kind: "text",
+      candidates: CORE_FIELD_SELECTORS.title.candidates,
+      expects: true,
+      timeoutMs: 3000,
+    });
 
-  for (const label of item.labels) {
+    await this.fillOne(page, {
+      label: "Omschrijving",
+      value: draft.description,
+      kind: "textarea",
+      candidates: CORE_FIELD_SELECTORS.description.candidates,
+      expects: true,
+      timeoutMs: 3000,
+    });
+
+    await this.fillOne(page, {
+      label: "Prijs",
+      value: String(draft.price || ""),
+      kind: "number",
+      candidates: CORE_FIELD_SELECTORS.price.candidates,
+      expects: true,
+      timeoutMs: 3000,
+    });
+  }
+
+  // ------------------------------------------------------ structured fields
+
+  private async fillStructuredFields(page: Page, draft: AdvertisementDraft): Promise<void> {
+    for (const field of draft.fields) {
+      const label = field.marktplaatsLabel ?? field.label;
+      const candidates = buildAttributeCandidates({
+        internalField: field.key,
+        ownLabel: field.label,
+        marktplaatsLabel: field.marktplaatsLabel,
+      });
+      await this.fillOne(page, {
+        label,
+        value: field.value,
+        kind: field.kind === "select" || field.marktplaatsType === "LIST" ? "select" : field.kind,
+        candidates,
+        expects: field.expectsMarktplaatsField,
+        marktplaatsKey: field.marktplaatsKey,
+        timeoutMs: field.expectsMarktplaatsField ? 2500 : 800,
+        options: field.marktplaatsOptions,
+      });
+    }
+  }
+
+  private async fillOne(
+    page: Page,
+    params: {
+      label: string;
+      value: string;
+      kind: "text" | "textarea" | "select" | "number";
+      candidates: SelectorCandidate[];
+      expects: boolean;
+      timeoutMs: number;
+      marktplaatsKey?: string | null;
+      options?: AdvertisementDraft["fields"][number]["marktplaatsOptions"];
+    }
+  ): Promise<void> {
+    const { label, value, expects } = params;
+    if (!value || value.trim().length === 0) {
+      this.info(label, "leeg in Shopify — overgeslagen");
+      return;
+    }
+
+    const resolved = await this.waitForResolve(page, params.candidates, params.timeoutMs);
+    if (!resolved) {
+      const tried = params.candidates.length;
+      // A key still carrying the mock_ prefix comes from the placeholder API
+      // schema, so its absence on the live form is expected, not a defect.
+      if (params.marktplaatsKey?.startsWith("mock_")) {
+        this.info(label, `geen echt Marktplaats-attribuut (mapping-sleutel ${params.marktplaatsKey})`);
+      } else if (expects) {
+        this.warn(label, `niet gevonden op het Marktplaats-formulier (${tried} selectoren geprobeerd)`);
+        this.unfilled.push(label);
+      } else {
+        this.info(label, `geen bijpassend Marktplaats-veld (${tried} selectoren geprobeerd)`);
+      }
+      return;
+    }
+
     try {
-      const locator = page.getByLabel(label, { exact: false }).first();
-      await locator.waitFor({ state: "visible", timeout: FIELD_TIMEOUT_MS });
-      const tagName = await locator.evaluate((el) => el.tagName);
+      const before = await this.readDisplay(resolved.locator, params.kind);
+      await resolved.locator.scrollIntoViewIfNeeded().catch(() => {});
 
-      if (tagName === "SELECT") {
-        for (const value of valuesToTry) {
+      // The mapping layer types fields from the (mock) API schema, where many
+      // real Marktplaats dropdowns arrive as STRING. Never trust that: the DOM
+      // decides whether we are filling an <input> or selecting an <option>.
+      const tag = await resolved.locator.evaluate((el) => el.tagName.toLowerCase()).catch(() => "");
+      const kind: typeof params.kind = tag === "select" ? "select" : params.kind;
+
+      // Merk-achtige velden zijn geen gewone inputs maar een dialoog met een
+      // zoeklijst (aria-haspopup="dialog") — daar moet uit gekozen worden.
+      if (kind !== "select" && (await this.isAutocomplete(resolved.locator))) {
+        const gekozen = await this.fillAutocomplete(page, resolved.locator, value);
+        if (gekozen) {
+          this.ok(
+            label,
+            `autocomplete "${gekozen}" ← "${value}" (${resolved.candidate.note ?? resolved.candidate.strategy})`
+          );
+          return;
+        }
+        this.info(label, "autocomplete niet tot stand gekomen — probeer vlak invullen");
+      }
+
+      let matched: string | null = null;
+      if (kind === "select") {
+        matched = await this.selectValue(page, value, resolved, params.options);
+      } else {
+        await this.fillText(page, resolved.locator, value);
+      }
+      let after = await this.readDisplay(resolved.locator, kind);
+
+      // Selects throw when nothing matched, so reaching here already proves
+      // the value landed. Text fields are verified by reading the DOM back.
+      let applied =
+        kind === "select"
+          ? true
+          : after.trim().length > 0 &&
+            (after.trim() !== before.trim() || after.toLowerCase().includes(value.trim().toLowerCase()));
+
+      // Controlled inputs (notably the € amount field) silently drop a
+      // programmatic fill — retry with real keystrokes and a blur.
+      if (!applied && kind !== "select") {
+        await this.fillByKeyboard(page, resolved.locator, value);
+        after = await this.readDisplay(resolved.locator, kind);
+        applied =
+          after.trim().length > 0 &&
+          (after.trim() !== before.trim() || after.toLowerCase().includes(value.trim().toLowerCase()));
+      }
+
+      if (applied) {
+        this.ok(
+          label,
+          kind === "select" && matched
+            ? `geselecteerd "${matched}" ← "${value}" (${resolved.candidate.note ?? resolved.candidate.strategy})`
+            : `ingevuld (${resolved.candidate.note ?? resolved.candidate.strategy})`
+        );
+      } else {
+        this.warn(label, "veld gevonden maar de waarde lijkt niet te zijn toegepast");
+        this.unfilled.push(label);
+      }
+    } catch (err) {
+      this.warn(label, `invullen mislukt: ${this.errMsg(err)}`);
+      this.unfilled.push(label);
+      await page.keyboard.press("Escape").catch(() => {});
+    }
+  }
+
+  private async isAutocomplete(locator: Locator): Promise<boolean> {
+    return await locator
+      .evaluate((el) => {
+        if ((el.getAttribute("data-testid") ?? "").startsWith("attribute-autocomplete-")) return true;
+        return Boolean(el.closest("[aria-haspopup='dialog']"));
+      })
+      .catch(() => false);
+  }
+
+  /**
+   * Vul een autocomplete-veld (bijv. Merk) via zijn zoekdialoog: open, typ de
+   * waarde en kies de beste match uit de lijst. Geeft de gekozen tekst terug.
+   */
+  private async fillAutocomplete(page: Page, locator: Locator, value: string): Promise<string | null> {
+    await locator.click({ timeout: 5000 }).catch(() => {});
+    const dialog = page.locator('[role="dialog"]').last();
+    if (!(await dialog.isVisible().catch(() => false))) return null;
+
+    const search = dialog.locator('input').first();
+    await search.waitFor({ timeout: 5000 }).catch(() => {});
+    await search.fill("").catch(() => {});
+    await search.type(value, { delay: 20 }).catch(() => {});
+    await page.waitForTimeout(1000);
+
+    const items = await dialog
+      .evaluate((el) => {
+        const nodes = [...el.querySelectorAll('li, [role="option"], [data-testid*="option"], button, a')];
+        return nodes.map((n) => (n.textContent ?? "").trim()).filter((t) => t.length > 0 && t.length < 80);
+      })
+      .catch(() => [] as string[]);
+
+    const hit =
+      items.find((t) => t.toLowerCase() === value.toLowerCase()) ??
+      items.find((t) => t.toLowerCase().includes(value.toLowerCase()));
+    if (!hit) return null;
+
+    await dialog
+      .evaluate((el, tekst) => {
+        const nodes = [...el.querySelectorAll('li, [role="option"], [data-testid*="option"], button, a')];
+        const node =
+          nodes.find((n) => (n.textContent ?? "").trim() === tekst) ??
+          nodes.find((n) => (n.textContent ?? "").trim().includes(tekst));
+        if (node) (node as HTMLElement).click();
+      }, hit)
+      .catch(() => null);
+    await page.waitForTimeout(500);
+    return hit;
+  }
+
+  private async fillText(page: Page, locator: Locator, value: string): Promise<void> {
+    try {
+      await locator.fill(value);
+      return;
+    } catch {
+      await this.fillByKeyboard(page, locator, value);
+    }
+  }
+
+  /** Real keystrokes + blur, for inputs that ignore a programmatic fill. */
+  private async fillByKeyboard(page: Page, locator: Locator, value: string): Promise<void> {
+    await locator.click().catch(() => {});
+    await page.keyboard.press("Control+A").catch(() => {});
+    await page.keyboard.press("Backspace").catch(() => {});
+    await page.keyboard.type(value, { delay: 15 });
+    await page.keyboard.press("Tab").catch(() => {});
+    await page.waitForTimeout(300).catch(() => {});
+  }
+
+  private async selectValue(
+    page: Page,
+    rawValue: string,
+    resolved: ResolvedLocator,
+    options?: AdvertisementDraft["fields"][number]["marktplaatsOptions"]
+  ): Promise<string> {
+    const locator = resolved.locator;
+    const tag = await locator.evaluate((el) => el.tagName.toLowerCase()).catch(() => "");
+
+    const option = options?.find((o) => o.value === rawValue);
+    const optionLabel = option ? option.labels?.nl ?? option.labels?.nl_NL ?? option.value : null;
+    const candidates = selectValueCandidates(rawValue, optionLabel);
+
+    if (tag === "select") {
+      const opts = await locator
+        .evaluate((el) =>
+          [...(el as HTMLSelectElement).options].map((o) => ({ value: o.value, text: (o.textContent ?? "").trim() }))
+        )
+        .catch(() => [] as { value: string; text: string }[]);
+
+      // Scoring instead of "first test that matches": a generic Shopify value
+      // like "iPhone" hits a dozen real options through a loose token match,
+      // and picking the first one would silently list the wrong model.
+      // 4 = exact label, 3 = exact value, 2 = whole-token match, 1 = substring.
+      const score = (candidate: string, option: { value: string; text: string }): number => {
+        if (option.text.toLowerCase() === candidate.toLowerCase()) return 4;
+        if (option.value.toLowerCase() === candidate.toLowerCase()) return 3;
+        const safe = escapeRegExp(candidate).replace(/\s+/g, "\\s+");
+        if (new RegExp(`(^|[^0-9A-Za-z])${safe}([^0-9A-Za-z]|$)`, "i").test(option.text)) return 2;
+        if (option.text.toLowerCase().includes(candidate.toLowerCase())) return 1;
+        return 0;
+      };
+
+      for (const candidate of candidates) {
+        const hits = opts
+          .map((opt) => ({ opt, s: score(candidate, opt) }))
+          .filter((h) => h.s > 0 && h.opt.value);
+        if (hits.length === 0) continue;
+
+        const best = Math.max(...hits.map((h) => h.s));
+        const winnaars = hits.filter((h) => h.s === best);
+        if (winnaars.length > 1 && best < 3) {
+          const tonen = winnaars
+            .slice(0, 6)
+            .map((h) => h.opt.text)
+            .join('", "');
+          throw new Error(
+            `waarde "${candidate}" is ambigu: ${winnaars.length} opties passen ("${tonen}") — kies dit veld handmatig`
+          );
+        }
+
+        const winnaar = winnaars[0].opt;
+        for (const attempt of [
+          () => locator.selectOption({ label: winnaar.text }),
+          () => locator.selectOption({ value: winnaar.value }),
+        ]) {
           try {
-            await locator.selectOption({ label: value });
-            return { key: item.key, label, status: "selected", detail: value };
+            await attempt();
+            return winnaar.text;
           } catch {
-            // try next value synonym
+            /* next strategy */
           }
         }
-        return { key: item.key, label, status: "error", detail: `Geen van de waarden (${valuesToTry.join(", ")}) kon geselecteerd worden in dit dropdown-veld.` };
       }
+      throw new Error(`geen passende optie in <select> voor "${rawValue}" (geprobeerd: ${candidates.join(", ")})`);
+    }
 
-      // Custom combobox: open it, then click a matching option by text.
-      await locator.click();
-      for (const value of valuesToTry) {
-        try {
-          const option = page.getByRole("option", { name: value, exact: false }).first();
-          await option.waitFor({ state: "visible", timeout: FIELD_TIMEOUT_MS });
-          await option.click();
-          return { key: item.key, label, status: "selected", detail: value };
-        } catch {
-          // try next value synonym
+    await locator.click();
+    await page.waitForTimeout(500);
+    for (const candidate of candidates) {
+      const exactish = new RegExp(`^\\s*${escapeRegExp(candidate)}\\s*$`, "i");
+      const optionLocators = [
+        page.getByRole("option", { name: exactish }).first(),
+        page.locator('[role="listbox"] li, [role="listbox"] [role="option"]').filter({ hasText: candidate }).first(),
+      ];
+      for (const optionLocator of optionLocators) {
+        if ((await optionLocator.count()) > 0 && (await optionLocator.isVisible().catch(() => false))) {
+          const tekst = (await optionLocator.innerText().catch(() => "")).trim();
+          await optionLocator.click();
+          return tekst || candidate;
         }
       }
-    } catch {
-      // try next label
     }
+    throw new Error(`optie "${rawValue}" niet gevonden in de keuzelijst (geprobeerd: ${candidates.join(", ")})`);
   }
 
-  return { key: item.key, label: item.labels[0], status: "not_found", detail: `Geen select/combobox gevonden voor label(s): ${item.labels.join(", ")}` };
-}
-
-async function fillField(page: Page, item: BrowserFieldPlanItem): Promise<FieldFillResult> {
-  try {
-    if (item.kind === "select") return await trySelectField(page, item);
-    return await tryTextLikeField(page, item);
-  } catch (err) {
-    return { key: item.key, label: item.labels[0], status: "error", detail: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-async function uploadImages(page: Page, imagePaths: string[], log: string[]): Promise<{ uploaded: number; failed: number }> {
-  if (imagePaths.length === 0) return { uploaded: 0, failed: 0 };
-
-  const fileInputCandidates = [page.locator('input[type="file"]').first(), page.getByLabel(/foto|afbeelding/i).first()];
-
-  for (const candidate of fileInputCandidates) {
+  private async readDisplay(locator: Locator, kind: string): Promise<string> {
     try {
-      await candidate.waitFor({ state: "attached", timeout: FIELD_TIMEOUT_MS });
-      await candidate.setInputFiles(imagePaths);
-      return { uploaded: imagePaths.length, failed: 0 };
+      const value = await locator.inputValue();
+      if (kind === "select" && value && value.trim().length > 0) return value;
+      if (kind !== "select" && value !== null) return value;
     } catch {
-      // try next candidate
+      /* not a native input/select — fall through to innerText */
+    }
+    try {
+      return await locator.innerText();
+    } catch {
+      return "";
     }
   }
 
-  log.push("Geen file-upload veld gevonden voor afbeeldingen (geprobeerd: input[type=file], label bevat 'foto'/'afbeelding').");
-  return { uploaded: 0, failed: imagePaths.length };
-}
+  /**
+   * Verplichte verkoper-invulling die nergens uit Shopify komt:
+   *  - advertentievorm: altijd GRATIS (nooit Plus/Premium — dat kost geld)
+   *  - postcode: verplicht veld van Marktplaats zelf
+   */
+  private async fillSellerFields(page: Page): Promise<void> {
+    await this.selectFreeBundle(page);
 
-/**
- * Opens a real, visible Marktplaats session, fills in as much of the form
- * as it can from `plan`, uploads the product images, and then STOPS. Never
- * closes the browser context and never clicks a final submit/publish
- * control — see assertSubmitGuard().
- */
-export async function runBrowserTest(plan: BrowserTestPlan): Promise<BrowserTestResult> {
-  const startedAt = new Date().toISOString();
-  const allowSubmit = isSubmitAllowed();
-  const log: string[] = [];
-  const warnings: string[] = [];
-  const errors: string[] = [];
-
-  if (!isBrowserTestEnabled()) {
-    throw new Error("MARKTPLAATS_BROWSER_TEST staat niet op 'true' — deze testfunctie is uitgeschakeld.");
-  }
-  if (process.env.VERCEL) {
-    throw new Error("De Marktplaats-browsertest is alleen lokaal beschikbaar (npm run dev), niet op Vercel.");
-  }
-
-  await mkdir(profileDir(), { recursive: true });
-
-  let context: BrowserContext;
-  try {
-    context = await chromium.launchPersistentContext(profileDir(), {
-      headless: false,
-      viewport: null,
-    });
-  } catch (err) {
-    throw new Error(`Kon geen browser starten: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  const page = context.pages()[0] ?? (await context.newPage());
-
-  const { dir: imagesDir, images, failed: downloadFailed } = await downloadImages(plan.imageUrls);
-  if (downloadFailed.length > 0) {
-    warnings.push(`${downloadFailed.length} van ${plan.imageUrls.length} afbeelding(en) konden niet gedownload worden.`);
-  }
-
-  const fieldResults: FieldFillResult[] = [];
-
-  try {
-    const navigated = await findPostAdEntryAndNavigate(page, log);
-    if (!navigated) warnings.push("Kon de plaats-advertentie-pagina niet automatisch vinden — controleer het browservenster.");
-
-    if (await looksLikeLoginScreen(page)) {
-      await waitForManualLogin(page, log);
-    }
-
-    for (const item of plan.fields) {
-      const result = await fillField(page, item);
-      fieldResults.push(result);
-      if (result.status === "error") errors.push(`${result.label}: ${result.detail}`);
-      if (result.status === "not_found" && item.required) warnings.push(`Verplicht veld niet gevonden: ${result.label}`);
-    }
-
-    const { uploaded, failed } = await uploadImages(
-      page,
-      images.map((i) => i.path),
-      log
-    );
-    fieldResults.push({
-      key: "images",
-      label: "Afbeeldingen",
-      status: uploaded > 0 ? "filled" : "not_found",
-      detail: `${uploaded} geüpload${failed > 0 ? `, ${failed} mislukt` : ""}`,
-    });
-
-    // Explicit, independent guard — stays in place even if selector logic
-    // above changes. No submit/publish click exists anywhere in this file.
-    if (allowSubmit) {
-      assertSubmitGuard();
-      log.push(
-        "MARKTPLAATS_BROWSER_ALLOW_SUBMIT=true, maar deze versie van de testfunctie implementeert bewust geen submit-actie. " +
-          "Publiceren blijft een handmatige stap in het geopende venster."
+    const postcode = this.config.postcode;
+    if (!postcode) {
+      this.error(
+        "Postcode",
+        "MARKTPLAATS_BROWSER_POSTCODE staat niet in .env.local — verplicht veld blijft leeg en plaatsen faalt."
       );
-    } else {
-      log.push("MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false — gestopt vóór publicatie. Controleer het formulier handmatig in het geopende venster.");
+      return;
     }
 
-    return {
-      startedAt,
-      allowSubmit,
-      stoppedBeforeSubmit: true,
-      fieldResults,
-      imagesUploaded: uploaded,
-      imagesFailed: failed + downloadFailed.length,
-      warnings: [...warnings, ...log],
-      errors,
-      pageUrl: page.url(),
-    };
-  } finally {
-    // Browser window stays open on purpose — only clean up the temp image
-    // files, never the browser/context.
-    await cleanupImages(imagesDir);
+    const resolved = await this.waitForResolve(page, POSTCODE_CANDIDATES, 4000);
+    if (!resolved) {
+      this.warn("Postcode", "Veld niet gevonden op dit formulier.");
+      return;
+    }
+
+    const current = (await resolved.locator.inputValue().catch(() => "")).trim();
+    if (current.toUpperCase() === postcode.toUpperCase()) {
+      this.ok("Postcode", `${postcode} (al ingevuld)`);
+      return;
+    }
+
+    await this.fillText(page, resolved.locator, postcode);
+    const value = (await resolved.locator.inputValue().catch(() => "")).trim();
+    if (value.toUpperCase() === postcode.toUpperCase()) {
+      this.ok("Postcode", `${postcode} (${resolved.candidate.strategy})`);
+    } else {
+      this.warn("Postcode", `invullen lukte niet (verwacht ${postcode}, gevonden "${value}")`);
+    }
+  }
+
+  /** Kiest de gratis advertentievorm; betaalde vormen worden nooit aangeklikt. */
+  private async selectFreeBundle(page: Page): Promise<void> {
+    const checked = await page
+      .locator("#feature-FREE")
+      .isChecked()
+      .catch(() => false);
+    if (checked) {
+      this.ok("Advertentievorm", "Gratis (al geselecteerd)");
+      return;
+    }
+
+    const resolved = await this.waitForResolve(page, FREE_BUNDLE_CANDIDATES, 3000);
+    if (!resolved) {
+      this.warn("Advertentievorm", "Gratis-optie niet gevonden — er is GEEN betaalde vorm aangeklikt.");
+      return;
+    }
+
+    try {
+      await resolved.locator.click();
+      await page.waitForTimeout(400).catch(() => {});
+    } catch (err) {
+      this.warn("Advertentievorm", `aanklikken mislukt: ${this.errMsg(err)}`);
+      return;
+    }
+
+    const active = await page
+      .locator('input[name="bundle-selection"]')
+      .evaluateAll((els) =>
+        els.filter((el) => (el as HTMLInputElement).checked).map((el) => `${el.id}:${(el as HTMLInputElement).value}`)
+      )
+      .catch(() => [] as string[]);
+
+    const paidHit = active.find((entry) => PAID_BUNDLE_PATTERN.test(entry));
+    if (paidHit) {
+      this.error("Advertentievorm", `Betaalde vorm actief (${paidHit}) — niet plaatsen!`);
+      return;
+    }
+    this.ok("Advertentievorm", active.length > 0 ? "Gratis (€0,00)" : "aangeklikt (controle lukte niet)");
+  }
+
+  // ------------------------------------------------------------ navigation
+
+  /**
+   * Steps forward through the wizard ONLY while we still know fields we could
+   * not fill, and never by pressing anything that could publish.
+   */
+  private async maybeAdvance(page: Page): Promise<void> {
+    while (this.unfilled.length > 0 && this.advances < MAX_ADVANCES) {
+      const resolved = await this.waitForResolve(page, ADVANCE_CANDIDATES, 1500);
+      if (!resolved) return;
+      const name = (await resolved.locator.innerText().catch(() => "")).trim();
+      if (FINAL_CONTROL_PATTERN.test(name)) {
+        this.info("Volgende stap", `Niet doorgeklikt — "${name}" ziet eruit als een publicatieknop.`);
+        return;
+      }
+      try {
+        await resolved.locator.click();
+        this.advances += 1;
+        await page.waitForTimeout(1500);
+        this.info("Volgende stap", `"${name}" aangeklikt om resterende velden te bereiken`);
+      } catch (err) {
+        this.warn("Volgende stap", `Doorklikken mislukt: ${this.errMsg(err)}`);
+        return;
+      }
+    }
+  }
+
+  // ------------------------------------------------------------- submit
+
+  /**
+   * FINAL SAFETY NET. Called exactly once, at the very end of the flow.
+   * With MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false the browser is left open on
+   * the last review page and nothing is ever clicked — regardless of which
+   * selectors or flow steps exist.
+   */
+  private async stopBeforeSubmitStep(page: Page): Promise<void> {
+    const guard = stopBeforeSubmit("Plaats advertentie");
+    this.run.stoppedBeforeSubmit = guard.stopped;
+
+    if (guard.stopped) {
+      recordStatus(this.run, {
+        field: "Plaats advertentie",
+        status: "info",
+        detail: guard.reason,
+      });
+      this.info("Controle", `Browser staat open voor handmatige controle${this.debugSuffix()}`);
+      setState(this.run, "done", "Gestopt vóór publicatie");
+      return;
+    }
+
+    try {
+      await this.attemptSubmit(page);
+      setState(this.run, "done", "Publicatie uitgevoerd (expliciet toegestaan via MARKTPLAATS_BROWSER_ALLOW_SUBMIT=true)");
+    } catch (err) {
+      if (err instanceof SubmitNotAllowedError) {
+        recordStatus(this.run, { field: "Plaats advertentie", status: "error", detail: err.message });
+        this.run.stoppedBeforeSubmit = true;
+        setState(this.run, "done", "Geblokkeerd door veiligheids-guard");
+        return;
+      }
+      this.error("Plaats advertentie", this.errMsg(err));
+      setState(this.run, "failed", "Publicatiestap mislukt");
+    }
+  }
+
+  /**
+   * The ONLY place that may trigger a definitive publish. assertSubmitAllowed()
+   * throws first, so a future refactor cannot publish by accident.
+   *
+   * After clicking we do NOT assume success: we watch the page for a real
+   * confirmation, a validation error, a confirmation dialog (one extra click)
+   * or a payment step — a payment page is always left alone.
+   */
+  private async attemptSubmit(page: Page): Promise<void> {
+    assertSubmitAllowed("Plaats advertentie");
+
+    const resolved = await this.waitForResolve(page, SUBMIT_CANDIDATES, 3000);
+    if (!resolved) {
+      this.warn("Plaats advertentie", "Publicatieknop niet gevonden — browser blijft open op de controlepagina.");
+      return;
+    }
+
+    const startUrl = page.url();
+    await resolved.locator.click();
+    await page.waitForTimeout(1500);
+    this.ok("Plaats advertentie", "aangeklikt (MARKTPLAATS_BROWSER_ALLOW_SUBMIT=true)");
+
+    const outcome = await this.waitForPublishOutcome(page, startUrl);
+    await this.snapshot(page, "04-na-plaatsen");
+
+    switch (outcome.kind) {
+      case "payment":
+        this.warn(
+          "Betalingsstap",
+          `Marktplaats wil naar een betaalpagina (${outcome.url}) — gestopt, er wordt niets betaald.`
+        );
+        setState(this.run, "done", "Gestopt vóór betaling — handmatig afronden");
+        return;
+      case "validation": {
+        for (const line of outcome.problems.slice(0, 8)) {
+          this.error("Validatie Marktplaats", line);
+        }
+        setState(this.run, "failed", "Plaatsen mislukt — Marktplaats toont validatiefouten");
+        return;
+      }
+      case "success":
+        this.run.postedUrl = outcome.url;
+        this.ok("Geplaatst", outcome.url);
+        this.info("Verwijderen", "Dit is een testadvertentie — verwijder hem zelf uit Mijn Advertenties.");
+        setState(this.run, "done", "Testadvertentie geplaatst op Marktplaats");
+        return;
+      default:
+        this.warn("Plaats advertentie", `Geen bevestiging gezien — laatste URL: ${outcome.url}`);
+        setState(this.run, "done", "Plaatsing onbekend — browser staat open voor controle");
+    }
+  }
+
+  /**
+   * Polls the page after the publish click until Marktplaats confirms, shows
+   * validation errors, asks for money, or we run out of patience. Clicks the
+   * submit button at most ONCE extra for a confirmation dialog.
+   */
+  private async waitForPublishOutcome(page: Page, startUrl: string): Promise<PublishOutcome> {
+    const deadline = Date.now() + 45_000;
+    let confirmClicks = 0;
+
+    for (;;) {
+      const url = page.url();
+      if (PAYMENT_URL_PATTERN.test(url)) return { kind: "payment", url };
+
+      const heading = await page
+        .locator("h1, h2")
+        .first()
+        .innerText()
+        .catch(() => "");
+      if (PAYMENT_HEADING_PATTERN.test(heading.trim())) return { kind: "payment", url };
+
+      const body = await page.locator("body").innerText().catch(() => "");
+      const navigatedAway = !this.samePage(url, startUrl);
+      if (navigatedAway && (PUBLISHED_URL_PATTERN.test(url) || PUBLISH_SUCCESS_PATTERN.test(body))) {
+        return { kind: "success", url };
+      }
+
+      // Marktplaats kan de geplaatste advertentie in een nieuw tabblad openen.
+      const opened = await this.findPublishedPage(page, startUrl);
+      if (opened) return { kind: "success", url: opened };
+
+      const problems = await this.collectValidationProblems(page);
+
+      if (problems.length > 0) {
+        // A confirmation dialog keeps the old errors in the DOM — click through
+        // it once. Otherwise the placement was rejected on this very page.
+        const dialogVisible = await page
+          .locator('[role="dialog"], [data-testid*="dialog"]')
+          .first()
+          .isVisible()
+          .catch(() => false);
+        if (dialogVisible && confirmClicks < 1) {
+          confirmClicks += 1;
+          const confirm = await this.resolveOn(page, SUBMIT_CANDIDATES);
+          if (confirm) {
+            await confirm.locator.click().catch(() => {});
+            await page.waitForTimeout(2000);
+            this.info("Plaats advertentie", "Bevestigingsdialoog een tweede keer aangeklikt");
+            continue;
+          }
+        }
+        if (!dialogVisible) return { kind: "validation", url, problems };
+      }
+
+      // Deliberately NO unconditional second click: pressing "Plaats je
+      // advertentie" twice could create two advertisements. Only an explicit
+      // confirmation dialog may be clicked through.
+
+      if (Date.now() >= deadline) return { kind: "timeout", url };
+      await page.waitForTimeout(1000).catch(() => {});
+    }
+  }
+
+  /** URL's identiek buiten querystring/slashed af — voor "zijn we nog op het formulier?". */
+  private samePage(a: string, b: string): boolean {
+    const strip = (u: string) => u.replace(/[?#].*$/, "").replace(/\/$/, "");
+    return strip(a) === strip(b);
+  }
+
+  /** Zoekt een ander tabblad waarop de advertentie daadwerkelijk is geplaatst. */
+  private async findPublishedPage(page: Page, startUrl: string): Promise<string | null> {
+    for (const other of page.context().pages()) {
+      if (other === page) continue;
+      const url = other.url();
+      if (!url || url === "about:blank" || this.samePage(url, startUrl)) continue;
+      if (PAYMENT_URL_PATTERN.test(url)) continue;
+      const body = await other.locator("body").innerText().catch(() => "");
+      if (PUBLISHED_URL_PATTERN.test(url) || PUBLISH_SUCCESS_PATTERN.test(body)) return url;
+    }
+    return null;
+  }
+
+  /** Visible field-level errors Marktplaats shows after a rejected submit. */
+  private async collectValidationProblems(page: Page): Promise<string[]> {
+    const problems: string[] = [];
+    try {
+      const nodes = page.locator(
+        '.hz-InlineFeedback--error, [data-testid*="error"], [aria-invalid="true"] + *, .FormField-error'
+      );
+      const count = await nodes.count();
+      for (let i = 0; i < Math.min(count, 8); i += 1) {
+        const text = (await nodes.nth(i).innerText().catch(() => "")).trim().replace(/\s+/g, " ");
+        if (text.length > 0 && !problems.includes(text)) problems.push(text.slice(0, 160));
+      }
+    } catch {
+      /* optional — absence of errors must never break the run */
+    }
+    return problems;
+  }
+
+  // --------------------------------------------------------------- helpers
+
+  private debugSuffix(): string {
+    return this.debugFiles.length > 0 ? ` (debug: ${this.debugFiles[this.debugFiles.length - 1]})` : "";
+  }
+
+  private async snapshot(page: Page, step: string): Promise<void> {
+    try {
+      const dir = ensureDir(this.config.debugDir);
+      const base = `${this.run.runId}-${step}`;
+      const file = path.join(dir, `${base}.png`);
+      await page.screenshot({ path: file }).catch(() => {});
+      fs.writeFileSync(path.join(dir, `${base}.html`), await page.content().catch(() => ""));
+      this.debugFiles.push(path.relative(process.cwd(), dir));
+    } catch {
+      /* debugging must never break the run */
+    }
+  }
+
+  private buildLocator(page: Page, candidate: SelectorCandidate): Locator {
+    const pattern = isRegexPattern(candidate.pattern) ? toRegExp(candidate.pattern) : candidate.pattern;
+    switch (candidate.strategy) {
+      case "label":
+        return page.getByLabel(pattern, { exact: candidate.exact ?? false });
+      case "role":
+        return page.getByRole(candidate.role ?? "textbox", { name: pattern, exact: candidate.exact ?? false });
+      case "placeholder":
+        return page.getByPlaceholder(pattern, { exact: candidate.exact ?? false });
+      case "testid":
+        return page.getByTestId(String(pattern));
+      case "xpath":
+        return page.locator(`xpath=${pattern}`);
+      case "css":
+      default:
+        return page.locator(String(pattern));
+    }
+  }
+
+  private async resolveOn(
+    page: Page,
+    candidates: SelectorCandidate[],
+    opts: { requireVisible?: boolean } = {}
+  ): Promise<ResolvedLocator | null> {
+    for (const candidate of candidates) {
+      try {
+        const locator = this.buildLocator(page, candidate).first();
+        if ((await locator.count()) === 0) continue;
+        if (opts.requireVisible !== false) {
+          const visible = await locator.isVisible().catch(() => false);
+          if (!visible) continue;
+        }
+        return { locator, candidate };
+      } catch {
+        /* try the next candidate */
+      }
+    }
+    return null;
+  }
+
+  /** Polls the candidate chain so late-rendering wizard fields are found too. */
+  private async waitForResolve(
+    page: Page,
+    candidates: SelectorCandidate[],
+    timeoutMs: number,
+    requireVisible = true
+  ): Promise<ResolvedLocator | null> {
+    const deadline = Date.now() + Math.max(timeoutMs, 200);
+    for (;;) {
+      const found = await this.resolveOn(page, candidates, { requireVisible });
+      if (found) return found;
+      if (Date.now() >= deadline) return null;
+      await page.waitForTimeout(250).catch(() => {});
+    }
   }
 }

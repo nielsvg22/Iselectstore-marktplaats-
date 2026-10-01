@@ -1,7 +1,10 @@
 import { ProductTemplate } from "../templates/types";
 import { FIELD_LIBRARY } from "../templates/types";
 
-const MARKTPLAATS_TITLE_MAX_LENGTH = 80; // Verify against current Marktplaats API docs before going live.
+// Marktplaats' eigen titelveld telt af met "N/60" (hz-TextField-characterCountAmount)
+// — 60 tekens, geverifieerd op het echte plaatsingsformulier. Onze eigen validator
+// moet dezelfde grens hanteren, anders wordt een te lange titel pas daar afgekeurd.
+const MARKTPLAATS_TITLE_MAX_LENGTH = 60;
 
 function humanizeValue(key: string, value: string): string {
   if (key === "storage_gb" || key === "ram_gb") return `${value}GB`;
@@ -25,9 +28,54 @@ export function generateShopifyTitle(template: ProductTemplate, data: Record<str
 }
 
 /**
- * Marktplaats title = Shopify title + battery (if present) + warranty (if present),
- * truncated intelligently to the platform limit while keeping model/RAM/storage.
+ * Marktplaats title = core (Shopify title, of een slimmere kern via
+ * `template.markplaatatsTitleFields`) + korte extras (batt / conditie /
+ * garantie), compact genoeg om binnen de 60 tekens te blijven.
  */
+// Kleurnamen inkorten voor de advertentietitel ("Space Grey" -> "grijs") —
+// de volledige waarde blijft staan in het `mkt.color`-attribuut.
+const COLOR_SHORT: Record<string, string> = {
+  "space grey": "grijs",
+  "space gray": "grijs",
+  "space black": "zwart",
+  gray: "grijs",
+  grijs: "grijs",
+  silver: "zilver",
+  zilver: "zilver",
+  black: "zwart",
+  zwart: "zwart",
+  white: "wit",
+  wit: "wit",
+  gold: "goud",
+  goud: "goud",
+  starlight: "sterrenlicht",
+  midnight: "middernacht",
+  blue: "blauw",
+  blauw: "blauw",
+  purple: "paars",
+  paars: "paars",
+  red: "rood",
+  rood: "rood",
+  green: "groen",
+  groen: "groen",
+  pink: "roze",
+  roze: "roze",
+};
+
+// Conditie-akkorderingen voor de titel ("Zeer nette staat" -> "zeer net").
+const CONDITION_SHORT: Record<string, string> = {
+  "als nieuw": "als nieuw",
+  "zeer nette staat": "zeer net",
+  "nette staat": "net",
+};
+
+function shortTitleValue(key: string, value: string): string {
+  const trimmed = value.trim();
+  if (key === "color") return COLOR_SHORT[trimmed.toLowerCase()] ?? humanizeValue(key, trimmed);
+  if (key === "condition") return CONDITION_SHORT[trimmed.toLowerCase()] ?? trimmed;
+  return humanizeValue(key, trimmed);
+}
+
 export function generateMarktplaatsTitle(
   template: ProductTemplate,
   data: Record<string, string>,
@@ -38,6 +86,18 @@ export function generateMarktplaatsTitle(
     return customTitle.trim();
   }
 
+  const core = template.marktplaatsTitleFields
+    ? template.marktplaatsTitleFields
+        .map((key) => {
+          const value = data[key];
+          return value && value.trim().length > 0 ? shortTitleValue(key, value) : null;
+        })
+        .filter((v): v is string => Boolean(v))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim()
+    : shopifyTitle;
+
   const extras: string[] = [];
   for (const key of template.marktplaatsTitleExtraFields) {
     const value = data[key];
@@ -47,26 +107,31 @@ export function generateMarktplaatsTitle(
     } else if (key === "warranty_months") {
       extras.push(`${value} mnd garantie`);
     } else {
-      extras.push(`${humanizeValue(key, value)}`);
+      extras.push(`${shortTitleValue(key, value)}`);
     }
   }
 
-  let title = shopifyTitle;
-  if (extras.length > 0) {
-    title = `${shopifyTitle} / ${extras.join(" / ")}`;
-  }
+  const rebuild = (ex: string[]): string => (ex.length > 0 ? `${core} / ${ex.join(" / ")}` : core);
+  let title = rebuild(extras);
 
   if (title.length <= MARKTPLAATS_TITLE_MAX_LENGTH) {
     return title;
   }
 
-  // Intelligent shortening: drop extras one at a time from the end (garantie
-  // before battery, since extras are ordered battery-then-warranty), keeping
-  // the core Shopify title (model/RAM/storage) intact.
+  // Intelligent shortening: garantie eerst beknopter ("12 mnd garantie" ->
+  // "garantie"), daarna extras één voor één vanaf het einde laten vallen
+  // (conditie vóór batt), zodat de kern (model/chip/opslag/kleur) intact blijft.
   const remaining = [...extras];
+  let garantieBeknopt = false;
   while (remaining.length > 0 && title.length > MARKTPLAATS_TITLE_MAX_LENGTH) {
-    remaining.pop();
-    title = remaining.length > 0 ? `${shopifyTitle} / ${remaining.join(" / ")}` : shopifyTitle;
+    const last = remaining[remaining.length - 1];
+    if (!garantieBeknopt && /^\d+ mnd garantie$/.test(last)) {
+      garantieBeknopt = true;
+      remaining[remaining.length - 1] = "garantie";
+    } else {
+      remaining.pop();
+    }
+    title = rebuild(remaining);
   }
 
   if (title.length > MARKTPLAATS_TITLE_MAX_LENGTH) {

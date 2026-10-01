@@ -23,11 +23,12 @@ export interface ProductPreview {
   payloadPreview: ReturnType<typeof buildMarktplaatsPayload>;
   imageUrls: string[];
   /**
-   * Resolved template + per-field data (incl. template defaults) used to
-   * build this preview. Exposed so other consumers (e.g. the Playwright
-   * browser-test publisher) can build their own view without re-deriving
-   * or duplicating the Shopify → Marktplaats mapping (rule: single mapping,
-   * reused everywhere — see lib/marktplaats/browserTest/fieldPlan.ts).
+   * Resolved template + structured Shopify metafield data (mkt.*) incl.
+   * template defaults — the single input the mapping was computed from.
+   * Exposed so downstream publishers (the future official API publisher
+   * lib/marktplaats/apiPublisher.ts and the local Playwright browser test
+   * lib/marktplaats/browserTest/) can reuse the exact same values without
+   * re-reading or re-deriving them (rule: one mapping, reused everywhere).
    */
   template: ProductTemplate;
   data: Record<string, string>;

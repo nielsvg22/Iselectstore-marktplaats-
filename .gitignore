@@ -10,7 +10,13 @@ node_modules
 # Shopify extension build output
 extensions/*/dist/
 
-# Marktplaats browser-test: persistent Playwright profile (cookies/login
-# session) — never commit this, it's a real logged-in session.
+# Marktplaats browser-test (Playwright) — NOOIT committen:
+# persistent browserprofiel met sessie/cookies, screenshots/HTML-snapshots,
+# eventuele storage-state en credentials.
+.playwright/
 .marktplaats-browser-profile/
 .marktplaats-browser-profile*/
+**/*.storageState.json
+**/*-storage-state.json
+test-results/
+playwright-report/

@@ -22,7 +22,8 @@ describe("iPhone template — FASE 49 testcase", () => {
   it("builds the extended Marktplaats title", () => {
     const shopifyTitle = generateShopifyTitle(template, data);
     const mpTitle = generateMarktplaatsTitle(template, data, shopifyTitle);
-    expect(mpTitle).toBe("iPhone 15 Pro 256GB Natural Titanium / 94% batt / 12 mnd garantie");
+    expect(mpTitle).toBe("iPhone 15 Pro 256GB Natural Titanium / 94% batt / garantie");
+    expect(mpTitle.length).toBeLessThanOrEqual(60);
   });
 });
 
@@ -48,7 +49,32 @@ describe("MacBook template — FASE 49 testcase", () => {
   it("builds the extended Marktplaats title", () => {
     const shopifyTitle = generateShopifyTitle(template, data);
     const mpTitle = generateMarktplaatsTitle(template, data, shopifyTitle);
-    expect(mpTitle).toBe('MacBook Pro 14" M3 Pro 18GB 512GB / 93% batt / 12 mnd garantie');
+    expect(mpTitle).toBe("MacBook Pro M3 Pro 512GB zwart / 93% batt / 12 mnd garantie");
+    expect(mpTitle.length).toBeLessThanOrEqual(60);
+  });
+});
+
+describe("MacBook advertentietitel — afgesproken formaat", () => {
+  const template = PRODUCT_TEMPLATES.MacBook;
+  const data = {
+    model: "MacBook Air",
+    screen_size: "13,3 inch",
+    chip: "M1",
+    ram_gb: "8",
+    storage_gb: "256",
+    color: "Space Grey",
+    condition: "Zeer nette staat",
+    battery_percentage: "88",
+    warranty_months: "12",
+  };
+
+  it("maakt 'Model Chip Opslag Kleur / batt / conditie / garantie' binnen 60 tekens", () => {
+    const shopifyTitle = generateShopifyTitle(template, data);
+    const mpTitle = generateMarktplaatsTitle(template, data, shopifyTitle);
+    expect(mpTitle).toBe("MacBook Air M1 256GB grijs / 88% batt / zeer net / garantie");
+    expect(mpTitle.length).toBeLessThanOrEqual(60);
+    expect(mpTitle).not.toContain("13,3"); // schermformaat hoort niet in de MP-titel
+    expect(mpTitle).not.toContain("8GB");
   });
 });
 
@@ -76,6 +102,6 @@ describe("Marktplaats title length limit", () => {
     };
     const shopifyTitle = generateShopifyTitle(template, data);
     const mpTitle = generateMarktplaatsTitle(template, data, shopifyTitle);
-    expect(mpTitle.length).toBeLessThanOrEqual(80);
+    expect(mpTitle.length).toBeLessThanOrEqual(60);
   });
 });

@@ -110,7 +110,10 @@ const macbook: ProductTemplate = {
   ),
   shopifyTitleFields: ["model", "screen_size", "chip", "ram_gb", "storage_gb"],
   shopifyFeatureFields: ["model", "ram_gb", "storage_gb", "color", "chip", "battery_percentage", "condition", "warranty_months", "keyboard_layout", "cycle_count"],
-  marktplaatsTitleExtraFields: ["battery_percentage", "warranty_months"],
+  // Advertentietitel: "MacBook Air M1 256GB grijs / 88% batt / zeer net / garantie"
+  // — compact gehouden omdat Marktplaats max 60 tekens toelaat.
+  marktplaatsTitleFields: ["model", "chip", "storage_gb", "color"],
+  marktplaatsTitleExtraFields: ["battery_percentage", "condition", "warranty_months"],
   marktplaatsDescriptionFields: ["battery_percentage", "warranty_months", "condition", "cycle_count", "accessories", "cosmetic_notes"],
   marktplaatsAttributes: ["condition", "ram_gb", "storage_gb", "color", "chip", "manufacturer_name"],
 };

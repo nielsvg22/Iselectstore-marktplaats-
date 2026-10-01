@@ -49,6 +49,14 @@ export interface ProductTemplate {
    */
   marktplaatsTitleExtraFields: string[];
 
+  /**
+   * Fields used to compose the *core* (before the " / …" extras) of the
+   * Marktplaats advertentie title, in order. When omitted the clean Shopify
+   * title is used unchanged. MacBook uses a slimmer set (zonder schermformaat
+   * en RAM) zodat de 60-tekenslimiet ruimte laat voor batt/conditie/garantie.
+   */
+  marktplaatsTitleFields?: string[];
+
   /** Fields used to compose the Marktplaats description body, in display order. */
   marktplaatsDescriptionFields: string[];
 

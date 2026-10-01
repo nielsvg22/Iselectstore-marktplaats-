@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildProductPreview } from "@/lib/marktplaats/orchestrator";
-import { publishToMarktplaats } from "@/lib/marktplaats/publishService";
+import { marktplaatsApiPublisher } from "@/lib/marktplaats/apiPublisher";
 import { humanizeError, logSync } from "@/lib/logging";
 
 export async function POST(req: NextRequest) {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     if (!preview.validation.publishable) {
       return NextResponse.json({ error: "Validatie bevat errors — kan niet publiceren.", validation: preview.validation }, { status: 422 });
     }
-    const result = await publishToMarktplaats(shopifyProductId, preview);
+    const result = await marktplaatsApiPublisher.publish(shopifyProductId, preview);
     return NextResponse.json({ result });
   } catch (err) {
     const message = humanizeError(err instanceof Error ? err.message : String(err));

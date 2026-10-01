@@ -1,45 +1,135 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildProductPreview } from "@/lib/marktplaats/orchestrator";
-import { buildBrowserTestPlan } from "@/lib/marktplaats/browserTest/fieldPlan";
-import { runBrowserTest } from "@/lib/marktplaats/browserTest/browserTestPublisher";
-import { logSync, humanizeError } from "@/lib/logging";
+import { marktplaatsService } from "@/lib/marktplaats/service";
+import { marktplaatsApiPublisher } from "@/lib/marktplaats/apiPublisher";
+import { MarktplaatsBrowserTestPublisher } from "@/lib/marktplaats/browserTest/browserTestPublisher";
+import { getBrowserTestConfig, isBrowserTestEnabled } from "@/lib/marktplaats/browserTest/config";
+import {
+  createRun,
+  findActiveRun,
+  getRun,
+  isRunActive,
+  recordStatus,
+  serializeRun,
+  setState,
+  compactMessage,
+} from "@/lib/marktplaats/browserTest/status";
+import { humanizeError, logSync } from "@/lib/logging";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+async function safeLog(action: string, shopifyProductId?: string, message?: string) {
+  try {
+    await logSync({ action, shopifyProductId, message });
+  } catch {
+    /* logging must never break the browser test */
+  }
+}
 
 /**
- * Local/dev-only mapping-verification test: opens a real, visible Marktplaats
- * browser session filled in with this product's data, then stops before
- * publishing. NOT the production publish path — see
- * lib/marktplaats/publishService.ts for that. Guarded by
- * MARKTPLAATS_BROWSER_TEST and never submits unless
- * MARKTPLAATS_BROWSER_ALLOW_SUBMIT=true (and even then, this build never
- * implements the actual submit click — see browserTestPublisher.ts).
+ * GET /api/marktplaats/browser-test            → config (for the UI)
+ * GET /api/marktplaats/browser-test?runId=…    → live status of one run
+ */
+export async function GET(req: NextRequest) {
+  const runId = req.nextUrl.searchParams.get("runId");
+  const config = getBrowserTestConfig();
+
+  if (runId) {
+    const run = getRun(runId);
+    if (!run) return NextResponse.json({ error: "Onbekende testrun." }, { status: 404 });
+    return NextResponse.json({ run: serializeRun(run), active: isRunActive(runId) });
+  }
+
+  return NextResponse.json({
+    enabled: isBrowserTestEnabled(),
+    allowSubmit: config.allowSubmit,
+    apiConfigured: marktplaatsApiPublisher.isConfigured(),
+    placementUrl: config.placementUrl,
+    profileDir: config.profileDir,
+  });
+}
+
+/**
+ * POST /api/marktplaats/browser-test  { shopifyProductId }
+ *
+ * Validates first, then starts the LOCAL Playwright test in the background
+ * and returns a runId the admin panel polls. The browser is never closed and
+ * the advertisement is never published while ALLOW_SUBMIT is false.
  */
 export async function POST(req: NextRequest) {
-  const { shopifyProductId } = await req.json();
+  const { shopifyProductId } = await req.json().catch(() => ({}) as { shopifyProductId?: string });
   if (!shopifyProductId) {
     return NextResponse.json({ error: "shopifyProductId is verplicht" }, { status: 400 });
   }
 
-  if ((process.env.MARKTPLAATS_BROWSER_TEST || "").trim().toLowerCase() !== "true") {
-    return NextResponse.json({ error: "Zet MARKTPLAATS_BROWSER_TEST=true in je lokale .env.local om deze testfunctie te gebruiken." }, { status: 403 });
+  if (!isBrowserTestEnabled()) {
+    return NextResponse.json(
+      {
+        error:
+          "De Marktplaats-browsertest staat uit. Zet MARKTPLAATS_BROWSER_TEST=true in .env.local en start de dev-server opnieuw.",
+      },
+      { status: 403 }
+    );
   }
 
+  const active = findActiveRun();
+  if (active) {
+    return NextResponse.json(
+      { error: "Er draait al een Marktplaats-browsertest. Wacht tot deze klaar is.", runId: active.runId },
+      { status: 409 }
+    );
+  }
+
+  let draft;
   try {
-    const preview = await buildProductPreview(shopifyProductId);
-    if (preview.validation.checks.some((c) => c.status === "error" && c.label === "Verplichte velden")) {
-      return NextResponse.json({ error: "Niet alle verplichte velden zijn ingevuld in Shopify — vul deze eerst aan.", validation: preview.validation }, { status: 422 });
-    }
-
-    const plan = buildBrowserTestPlan(preview);
-    const result = await runBrowserTest(plan);
-
-    await logSync({ shopifyProductId, action: "browser_test", message: `${result.fieldResults.filter((r) => r.status === "filled" || r.status === "selected").length}/${result.fieldResults.length} velden verwerkt` });
-
-    return NextResponse.json({ result });
+    draft = await marktplaatsService.buildAdvertisement(shopifyProductId);
   } catch (err) {
-    const message = humanizeError(err instanceof Error ? err.message : String(err));
-    await logSync({ shopifyProductId, action: "browser_test_error", message });
+    const message = compactMessage(humanizeError(err instanceof Error ? err.message : String(err)));
+    await safeLog("browser_test_error", shopifyProductId, message);
     return NextResponse.json({ error: message }, { status: 400 });
   }
+
+  const validation = marktplaatsService.validateAdvertisement(draft);
+  if (!validation.publishable) {
+    return NextResponse.json(
+      { error: "Validatie bevat errors — vul de ontbrekende Shopify-gegevens eerst aan.", validation },
+      { status: 422 }
+    );
+  }
+
+  const run = createRun(shopifyProductId);
+  run.title = draft.title;
+  recordStatus(run, { field: "Validatie", status: "ok", detail: `${validation.checks.filter((c) => c.status === "ok").length} checks OK` });
+  await safeLog("browser_test_start", shopifyProductId, `Gestart voor "${draft.title}"`);
+
+  // Deliberately not awaited: the run can take minutes (manual login) and the
+  // UI polls GET ?runId= for progress instead of holding this request open.
+  void (async () => {
+    try {
+      const publisher = new MarktplaatsBrowserTestPublisher(run);
+      await publisher.runDraft(draft);
+      await safeLog("browser_test_done", shopifyProductId, run.message ?? "Klaar");
+    } catch (err) {
+      const message = compactMessage(humanizeError(err instanceof Error ? err.message : String(err)));
+      recordStatus(run, { field: "Browser", status: "error", detail: message });
+      setState(run, "failed", message);
+      await safeLog("browser_test_error", shopifyProductId, message);
+    } finally {
+      if (run.state === "queued" || run.state === "running" || run.state === "waiting_login") {
+        setState(run, "done", run.message ?? "Klaar");
+      }
+    }
+  })();
+
+  return NextResponse.json(
+    {
+      runId: run.runId,
+      title: draft.title,
+      validation,
+      imageCount: draft.imageUrls.length,
+      fieldCount: draft.fields.length,
+      allowSubmit: getBrowserTestConfig().allowSubmit,
+    },
+    { status: 202 }
+  );
 }

@@ -35,8 +35,9 @@ status (token, environment).
    Marktplaats-categorie en (live of mock) category-attributes op, voert de
    mapping en preflight-validatie uit, en genereert titel + beschrijving.
 3. De admin-UI (`/admin/[productId]`) toont dit alles en biedt de knoppen
-   "Test Marktplaats mapping", "Toon Marktplaats payload", "Volledige
-   Marktplaats API-test" en "Publiceren op Marktplaats".
+   "Test Marktplaats mapping", "Toon Marktplaats payload", "Voorbeeld
+   advertentie", "Test op Marktplaats", "Volledige Marktplaats API-test" en
+   "Publiceren via API".
 
 ## Producttemplates
 
@@ -178,59 +179,72 @@ Zolang er nog geen bruikbare officiële Marktplaats API-toegang is, kun je de
 veldmapping verifiëren tegen het **echte** marktplaats.nl-formulier met de
 knop "Test op Marktplaats" op `/admin/{productId}`. Dit is uitdrukkelijk
 **geen vervanging** van de toekomstige officiële API-publicatie
-(`lib/marktplaats/publishService.ts`) — beide gebruiken dezelfde
-`buildProductPreview()`-mapping, nooit twee keer gebouwd.
+(`lib/marktplaats/apiPublisher.ts`) — beide routes draaien op exact dezelfde
+advertisement-data, nooit twee keer gebouwd.
 
-**Architectuur**
+**Architectuur (drie publishers, één datamodel)**
 
-- `lib/marktplaats/orchestrator.ts` → `buildProductPreview()` — ongewijzigde
-  centrale mapping/validatie (ook gebruikt door de officiële publish-flow).
-- `lib/marktplaats/browserTest/fieldPlan.ts` → zet een `ProductPreview` om in
-  een generiek, label-gebaseerd invulplan (geen eigen mapping-logica).
-- `lib/marktplaats/browserTest/browserTestPublisher.ts` → de Playwright-driver
-  (`MarktplaatsBrowserTestPublisher`): opent een zichtbare browser, vult
-  velden in op basis van label/role, upload afbeeldingen, **stopt altijd**
-  vóór de definitieve plaatsingsactie.
-- `lib/marktplaats/browserTest/imageDownloader.ts` → download Shopify-CDN
-  afbeeldingen naar een tijdelijke map (opgeruimd na afloop) zodat Playwright
-  ze kan uploaden.
+- `lib/marktplaats/service.ts` → `MarktplaatsService` met
+  `buildAdvertisement()` / `validateAdvertisement()`. Bouwt de
+  `AdvertisementDraft` (titel, prijs, categorie, velden, afbeeldingen) uit
+  `buildProductPreview()` — **de** gedeelde bron voor beide routes.
+- `lib/marktplaats/apiPublisher.ts` → `MarktplaatsApiPublisher`: de
+  officiële API-route (nu nog mock/sandbox; hier komt de echte API zodra
+  Marktplaats toegang verleent).
+- `lib/marktplaats/browserTest/browserTestPublisher.ts` →
+  `MarktplaatsBrowserTestPublisher`: Playwright, **alleen testdoeleinden**.
+  Opent de echte plaatsingspagina, vult velden in, uploadt afbeeldingen en
+  **stopt altijd** vóór de definitieve plaatsingsactie.
+
+**Ondersteunende modules** (allen in `lib/marktplaats/browserTest/`):
+
+- `config.ts` — env-config + de **harde** submit-guard
+  (`assertSubmitAllowed()` / `stopBeforeSubmit()`).
+- `selectors.ts` — volgorde van robuuste selectors per veld
+  (label → role → placeholder → data-testid → CSS/XPath als fallback).
+- `status.ts` — in-memory run/statusstore voor de live debug-uitvoer in de UI.
+- `session.ts` — één persistent browservenster dat over runs heen blijft.
+- `imageStore.ts` — downloadt Shopify-afbeeldingen naar een tijdelijke map
+  (opgeruimd na afloop) zodat Playwright echte bestanden kan uploaden.
 
 **Alleen lokaal (`npm run dev`), nooit op Vercel/Coolify** — opent een
-zichtbaar browservenster op de machine die het draait; de route weigert
-expliciet te draaien zodra `process.env.VERCEL` gezet is.
+zichtbaar browservenster op de machine die het draait. Playwright is
+server-side en staat in `serverComponentsExternalPackages`, dus nooit in de
+client-bundle.
 
 **Environment-variabelen** (zie `.env.example`):
 
 - `MARKTPLAATS_BROWSER_TEST=true` — zet lokaal in `.env.local` om de knop te
   activeren (API-route geeft 403 zolang dit niet "true" is).
-- `MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false` — harde guard. Deze build
-  implementeert zelfs bij `true` geen submit-klik; de advertentie plaats je
-  altijd zelf, handmatig, in het geopende venster.
-- `MARKTPLAATS_BROWSER_PROFILE_DIR` — map voor het persistente
-  Playwright-profiel (login/cookies), default `.marktplaats-browser-profile`,
-  staat in `.gitignore` — nooit committen.
-- `MARKTPLAATS_LISTING_URL` — optioneel, zet dit zodra je de echte
-  "plaats zakelijke advertentie"-URL kent; zonder deze variabele klikt de
-  testfunctie zelf op een "Plaats advertentie"-link vanaf de homepage.
+- `MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false` — **harde guard**. Zolang dit niet
+  expliciet `true` is, wordt de plaatsingsknop nooit aangeklikt; de flow
+  stopt op de controlepagina en de browser blijft open.
+- `MARKTPLAATS_BROWSER_PLACEMENT_URL` — standaard
+  `https://www.marktplaats.nl/plaats`.
+- `MARKTPLAATS_BROWSER_PROFILE_DIR` / `MARKTPLAATS_BROWSER_DEBUG_DIR` —
+  persistent browserprofiel (login/cookies) en screenshot/HTML-debug-output,
+  standaard onder `.playwright/` — staat in `.gitignore`, nooit committen.
+- Optioneel: `MARKTPLAATS_BROWSER_HEADLESS`, `MARKTPLAATS_BROWSER_CHANNEL`
+  (bv. `chrome`), `MARKTPLAATS_BROWSER_LOGIN_TIMEOUT_MS`,
+  `MARKTPLAATS_BROWSER_NAV_TIMEOUT_MS`, `MARKTPLAATS_BROWSER_MAX_IMAGES`.
 
 **Login**: geen inloggegevens worden ooit gelezen, opgeslagen of gecommit.
-Bij de eerste run (of een verlopen sessie) herkent de testfunctie het
-Marktplaats-loginscherm, wacht tot je handmatig bent ingelogd in het
-geopende venster, en gaat dan verder — die sessie blijft daarna bewaard in
-het lokale profiel.
+Bij de eerste run (of een verlopen sessie) zet de run-status zichzelf op
+`waiting_login`, wacht tot je handmatig bent ingelogd in het geopende
+venster, en gaat dan verder — die sessie blijft daarna bewaard in het
+lokale profiel.
 
-**Velden/selectors zijn bewust generiek** (label/role-gebaseerd, geen
-geraden CSS/XPath) omdat de echte paginastructuur nog niet geverifieerd is.
-Labels waarvan we vermoeden dat de echte pagina een andere tekst gebruikt
-staan in `LABEL_OVERRIDES` (`fieldPlan.ts`) — pas deze aan zodra je de
-werkelijke pagina hebt gezien. Een veld dat niet gevonden wordt crasht de
-hele run niet: het komt terug als "⚠ niet gevonden" in de resultaatlijst en
-de overige velden worden gewoon geprobeerd.
+**Velden/selectors** staan in `selectors.ts` en zijn bewust generiek
+(label/role-gebaseerd; CSS/XPath alleen als laatste fallback). Labels waarvan
+we vermoeden dat de echte pagina een andere tekst gebruikt staan in
+`FIELD_LABEL_ALIASES` — pas deze aan zodra je de werkelijke pagina hebt
+gezien. Een veld dat niet gevonden wordt crasht de hele run niet: het komt
+terug als "⚠ niet gevonden" en de overige velden worden gewoon geprobeerd.
 
-**Resultaatweergave**: de knop toont per veld ✓ (ingevuld/geselecteerd),
-⚠ (niet gevonden) of ❌ (fout), plus hoeveel afbeeldingen zijn geüpload en
-eventuele meldingen/fouten — zodat je in één oogopslag ziet wat (niet) is
-gelukt zonder de browserconsole te hoeven openen.
+**Resultaatweergave**: de UI pollt `/api/marktplaats/browser-test?runId=…`
+en toont per veld ✓ (ingevuld), ⚠ (niet gevonden), ✗ (fout) of ℹ
+(informatie), plus een duidelijke melding wanneer de run gestopt is vóór
+publicatie.
 
 ## Stappen: eerste echte advertentie publiceren
 

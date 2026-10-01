@@ -15,7 +15,8 @@ export interface ValidationResult {
   publishable: boolean;
 }
 
-const MARKTPLAATS_TITLE_MAX_LENGTH = 80;
+// Geverifieerd op het echte Marktplaats-formulier: het titelveld telt "N/60".
+const MARKTPLAATS_TITLE_MAX_LENGTH = 60;
 const MARKTPLAATS_DESCRIPTION_MAX_LENGTH = 5000; // Verify against current docs before going live.
 
 export function runPreflightValidation(params: {
