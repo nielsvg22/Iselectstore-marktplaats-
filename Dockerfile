@@ -28,6 +28,12 @@ RUN npm ci
 
 COPY . .
 
+# Fixed, non-$HOME browser location: this is installed while still root, but
+# the app actually runs as the non-root `app` user (via gosu, see
+# entrypoint.sh) — without this, Playwright installs to /root/.cache and the
+# app user later looks in /home/app/.cache and finds nothing.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # Downloads Chromium + the OS packages it needs at runtime.
 RUN npx playwright install --with-deps chromium
 
@@ -36,7 +42,7 @@ RUN npm run build
 # Profile dir (login session) and debug dir live on a mounted volume in
 # Coolify so they survive redeploys — see MARKTPLAATS_INTEGRATION.md.
 RUN mkdir -p /data/marktplaats-browser-profile /data/marktplaats-debug \
-    && chown -R app:app /app /data
+    && chown -R app:app /app /data /ms-playwright
 
 ENV NODE_ENV=production \
     DISPLAY=:99 \
