@@ -61,7 +61,24 @@ async function config() {
   return { domain, token, version };
 }
 
-async function shopifyFetch(path: string, init?: RequestInit) {
+/** Extracts page_info from the `rel="next"` entry of Shopify's cursor-pagination Link header, if present. */
+function parseNextPageInfo(linkHeader: string | null): string | null {
+  if (!linkHeader) return null;
+  for (const part of linkHeader.split(",")) {
+    const match = part.match(/<([^>]+)>;\s*rel="next"/);
+    if (match) {
+      try {
+        return new URL(match[1]).searchParams.get("page_info");
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/** Mirrors the original shopifyFetch's implicit `any` (raw Shopify REST JSON) so existing callers are unaffected. */
+async function shopifyFetchRaw(path: string, init?: RequestInit): Promise<{ data: any; nextPageInfo: string | null }> {
   const { domain, token, version } = await config();
   const res = await fetch(`https://${domain}/admin/api/${version}${path}`, {
     ...init,
@@ -76,7 +93,12 @@ async function shopifyFetch(path: string, init?: RequestInit) {
     const body = await res.text();
     throw new Error(`Shopify API ${res.status}: ${body}`);
   }
-  return res.json();
+  return { data: await res.json(), nextPageInfo: parseNextPageInfo(res.headers.get("link")) };
+}
+
+async function shopifyFetch(path: string, init?: RequestInit) {
+  const { data } = await shopifyFetchRaw(path, init);
+  return data;
 }
 
 export async function getProduct(productId: string): Promise<ShopifyProduct> {
@@ -109,15 +131,20 @@ export async function updateProduct(productId: string, product: Record<string, u
 export async function listProducts(limit = 50): Promise<ShopifyProduct[]> {
   const pageSize = Math.min(Math.max(limit, 1), 250);
   const all: ShopifyProduct[] = [];
-  let page = 1;
+  // Shopify removed numbered (?page=N) pagination from the REST Admin API —
+  // only cursor-based page_info (from the Link response header) works now.
+  let pageInfo: string | null = null;
+  let iterations = 0;
 
   while (all.length < limit) {
-    const data = await shopifyFetch(`/products.json?limit=${pageSize}&page=${page}`);
-    const batch = (data.products as ShopifyProduct[]) || [];
+    const path = pageInfo ? `/products.json?limit=${pageSize}&page_info=${encodeURIComponent(pageInfo)}` : `/products.json?limit=${pageSize}`;
+    const { data, nextPageInfo } = await shopifyFetchRaw(path);
+    const batch = ((data as { products?: ShopifyProduct[] }).products as ShopifyProduct[]) || [];
     all.push(...batch);
-    if (batch.length < pageSize) break;
-    page += 1;
-    if (page > 50) break; // hard safety valve: 12.500 products
+    iterations += 1;
+    if (!nextPageInfo || batch.length < pageSize) break;
+    pageInfo = nextPageInfo;
+    if (iterations > 50) break; // hard safety valve: 12.500 products
   }
 
   return all.slice(0, limit);
