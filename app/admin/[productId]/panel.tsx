@@ -38,6 +38,8 @@ interface BrowserTestConfig {
   apiConfigured: boolean;
   placementUrl: string;
   profileDir: string;
+  novncUrl: string | null;
+  novncPassword: string | null;
 }
 
 interface AttributeMappingResult {
@@ -246,7 +248,7 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
 
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: 12, color: "#991b1b" }}>{error}</div>}
 
-      {browserRun && <BrowserTestStatusCard run={browserRun} />}
+      {browserRun && <BrowserTestStatusCard run={browserRun} novncUrl={browserConfig?.novncUrl ?? null} novncPassword={browserConfig?.novncPassword ?? null} />}
 
       {preview && showAdPreview && <MarktplaatsAdPreview preview={preview} />}
 
@@ -329,9 +331,10 @@ function formatPrice(cents: number | undefined): string {
  * Live debug view of the local Playwright test: which field was filled, which
  * selector matched and which field Marktplaats did not offer.
  */
-function BrowserTestStatusCard({ run }: { run: BrowserTestRun }) {
+function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserTestRun; novncUrl: string | null; novncPassword: string | null }) {
   const isActive = run.state === "queued" || run.state === "running" || run.state === "waiting_login";
   const accent = run.state === "failed" ? "#dc2626" : isActive ? "#b45309" : "#16a34a";
+  const showViewer = isActive && Boolean(novncUrl);
 
   return (
     <div style={{ ...cardStyle(), borderColor: accent }}>
@@ -342,6 +345,26 @@ function BrowserTestStatusCard({ run }: { run: BrowserTestRun }) {
           {isActive ? "…" : ""}
         </span>
       </h3>
+
+      {showViewer && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 6 }}>
+            {run.state === "waiting_login"
+              ? "Live browser — tik hieronder als Marktplaats een verificatiecode vraagt:"
+              : "Live browser:"}
+          </div>
+          <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 10", borderRadius: 10, overflow: "hidden", border: "1px solid #e7e9ec", background: "#111" }}>
+            <iframe
+              src={`${novncUrl}/vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true${
+                novncPassword ? `&password=${encodeURIComponent(novncPassword)}` : ""
+              }`}
+              title="Marktplaats browsersessie"
+              allow="clipboard-read; clipboard-write"
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+            />
+          </div>
+        </div>
+      )}
 
       <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
         {run.statuses.map((s, i) => (

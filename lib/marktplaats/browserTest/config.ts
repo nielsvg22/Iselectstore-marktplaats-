@@ -72,6 +72,15 @@ export interface BrowserTestConfig {
    */
   username: string | null;
   password: string | null;
+  /**
+   * noVNC viewer URL (e.g. the Coolify VNC_PASSWORD-protected domain on
+   * port 6080) + its password, so the admin UI can embed the live browser
+   * directly instead of making someone open/copy a separate link — the main
+   * thing that made this unusable from a phone. Only set when deployed
+   * (e.g. Coolify); empty locally, where there is no separate noVNC service.
+   */
+  novncUrl: string | null;
+  novncPassword: string | null;
 }
 
 export function getBrowserTestConfig(): BrowserTestConfig {
@@ -92,6 +101,8 @@ export function getBrowserTestConfig(): BrowserTestConfig {
     maxImages: envNumber("MARKTPLAATS_BROWSER_MAX_IMAGES", 10),
     username: process.env.MARKTPLAATS_USERNAME?.trim() || null,
     password: process.env.MARKTPLAATS_PASSWORD?.trim() || null,
+    novncUrl: process.env.MARKTPLAATS_BROWSER_NOVNC_URL?.trim().replace(/\/$/, "") || null,
+    novncPassword: process.env.VNC_PASSWORD?.trim() || null,
   };
 }
 

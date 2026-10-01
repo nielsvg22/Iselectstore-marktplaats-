@@ -46,6 +46,12 @@ export async function GET(req: NextRequest) {
     apiConfigured: marktplaatsApiPublisher.isConfigured(),
     placementUrl: config.placementUrl,
     profileDir: config.profileDir,
+    // Only present when deployed with a separate noVNC service (e.g.
+    // Coolify) — lets the admin UI embed the live browser view directly.
+    // Sent to whoever can already load this admin page; there is no extra
+    // auth boundary here beyond that today (see MARKTPLAATS_INTEGRATION.md).
+    novncUrl: config.novncUrl,
+    novncPassword: config.novncPassword,
   });
 }
 

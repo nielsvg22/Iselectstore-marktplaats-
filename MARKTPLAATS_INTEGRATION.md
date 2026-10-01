@@ -234,6 +234,11 @@ VPS in plaats van je eigen laptop.
 - Zet de noVNC-pagina (poort 6080) achter een eigen, afgeschermd (sub)domein
   — dit is een live, ingelogde Marktplaats-sessie; behandel de URL + VNC-
   wachtwoord als een credential.
+- Zet je ook `MARKTPLAATS_BROWSER_NOVNC_URL` (en `VNC_PASSWORD`), dan toont
+  het adminpanel de live browser direct ingesloten (iframe) zodra een run
+  actief is, i.p.v. een losse tab/link — vooral bedoeld voor gebruik op
+  telefoon, waar schakelen tussen twee pagina's onhandig is. Zonder deze
+  env-var werkt alles zoals voorheen (losse noVNC-URL zelf opzoeken/delen).
 
 **Environment-variabelen** (zie `.env.example`):
 
