@@ -207,10 +207,33 @@ advertisement-data, nooit twee keer gebouwd.
 - `imageStore.ts` — downloadt Shopify-afbeeldingen naar een tijdelijke map
   (opgeruimd na afloop) zodat Playwright echte bestanden kan uploaden.
 
-**Alleen lokaal (`npm run dev`), nooit op Vercel/Coolify** — opent een
-zichtbaar browservenster op de machine die het draait. Playwright is
-server-side en staat in `serverComponentsExternalPackages`, dus nooit in de
-client-bundle.
+**Lokaal (`npm run dev`) of op een eigen VPS via Coolify** — nooit op
+Vercel: dat heeft geen scherm en elke functie-aanroep start in een nieuw,
+leeg containertje. Playwright is server-side en staat in
+`serverComponentsExternalPackages`, dus nooit in de client-bundle.
+
+### Coolify-deployment (zichtbare browser via noVNC)
+
+`Dockerfile` + `docker/entrypoint.sh` draaien de app **en** een zichtbare
+Chromium-sessie in dezelfde container: Xvfb (virtueel scherm) + x11vnc +
+noVNC, zodat je de browser gewoon in een webpagina bekijkt en erin kan
+inloggen — iets wat lokaal draaien ook doet, maar dan vanaf een always-on
+VPS in plaats van je eigen laptop.
+
+- **Poort 3000** — de Next.js-app zelf (zelfde image, los van de Vercel-deploy).
+- **Poort 6080** — noVNC-webclient (`/vnc.html`), toont het live Chromium-venster.
+  Vereist `VNC_PASSWORD` als env-var — de container weigert te starten zonder.
+- **Non-root user** (`app`) i.p.v. `--no-sandbox`, zodat Chromium's eigen
+  sandbox intact blijft (`lib/marktplaats/browserTest/browserTestPublisher.ts`
+  is hiervoor niet aangepast).
+- `MARKTPLAATS_BROWSER_PROFILE_DIR=/data/marktplaats-browser-profile` en
+  `MARKTPLAATS_BROWSER_DEBUG_DIR=/data/marktplaats-debug` — zet `/data` als
+  persistent volume in Coolify zodat de login-sessie een herdeploy overleeft
+  (zonder volume overleeft de sessie alleen een gewone restart van dezelfde
+  container, niet een nieuwe build).
+- Zet de noVNC-pagina (poort 6080) achter een eigen, afgeschermd (sub)domein
+  — dit is een live, ingelogde Marktplaats-sessie; behandel de URL + VNC-
+  wachtwoord als een credential.
 
 **Environment-variabelen** (zie `.env.example`):
 
