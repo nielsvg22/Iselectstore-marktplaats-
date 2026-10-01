@@ -34,7 +34,27 @@ interface ProductPreview {
   payloadPreview: { priceModel: { askingPrice?: number } };
 }
 
+interface FieldFillResult {
+  key: string;
+  label: string;
+  status: "filled" | "selected" | "not_found" | "skipped" | "error";
+  detail?: string;
+}
+
+interface BrowserTestResult {
+  startedAt: string;
+  allowSubmit: boolean;
+  stoppedBeforeSubmit: boolean;
+  fieldResults: FieldFillResult[];
+  imagesUploaded: number;
+  imagesFailed: number;
+  warnings: string[];
+  errors: string[];
+  pageUrl: string | null;
+}
+
 const statusIcon: Record<CheckStatus, string> = { ok: "✅", warning: "⚠", error: "❌" };
+const fieldFillIcon: Record<FieldFillResult["status"], string> = { filled: "✓", selected: "✓", not_found: "⚠", skipped: "—", error: "❌" };
 const attrStatusIcon: Record<string, string> = {
   mapped: "✅",
   missing_value: "—",
@@ -48,6 +68,7 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
   const [payload, setPayload] = useState<unknown>(null);
   const [fullTestResult, setFullTestResult] = useState<{ passed: boolean; steps: { label: string; ok: boolean; detail?: string }[]; mock: boolean } | null>(null);
   const [publishResult, setPublishResult] = useState<{ advertisementId: string; mock: boolean } | null>(null);
+  const [browserTestResult, setBrowserTestResult] = useState<BrowserTestResult | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAdPreview, setShowAdPreview] = useState(false);
@@ -102,6 +123,12 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
     if (data) setPublishResult(data.result);
   }
 
+  async function browserTest() {
+    setBrowserTestResult(null);
+    const data = await call("/api/marktplaats/browser-test", "browsertest");
+    if (data) setBrowserTestResult(data.result);
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {productType && <AIRecognitionPanel shopifyProductId={shopifyProductId} productType={productType} />}
@@ -119,10 +146,17 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
         <button onClick={fullApiTest} disabled={loading !== null} style={btnStyle()}>
           {loading === "fulltest" ? "Bezig…" : "Volledige Marktplaats API-test"}
         </button>
+        <button onClick={browserTest} disabled={loading !== null} style={btnStyle()}>
+          {loading === "browsertest" ? "Browser openen…" : "Test op Marktplaats"}
+        </button>
         <button onClick={publish} disabled={loading !== null || (preview ? !preview.validation.publishable : false)} style={btnStyle(true)}>
-          {loading === "publish" ? "Bezig…" : "Publiceren op Marktplaats"}
+          {loading === "publish" ? "Bezig…" : "Publiceren via API"}
         </button>
       </div>
+      <p style={{ fontSize: 12.5, color: "#6b7280", margin: "-6px 0 0" }}>
+        &quot;Test op Marktplaats&quot; opent het echte Marktplaats-formulier in een browservenster en vult gegevens automatisch in.
+        De advertentie wordt <b>niet</b> automatisch geplaatst — dat doe je zelf, handmatig, in dat venster.
+      </p>
 
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: 12, color: "#991b1b" }}>{error}</div>}
 
@@ -186,6 +220,47 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
             ))}
           </ul>
           <div style={{ marginTop: 8, fontWeight: 700, color: fullTestResult.passed ? "#16a34a" : "#dc2626" }}>RESULTAAT: {fullTestResult.passed ? "PASSED" : "FAILED"}</div>
+        </div>
+      )}
+
+      {browserTestResult && (
+        <div style={cardStyle()}>
+          <h3 style={{ marginTop: 0 }}>Test op Marktplaats — resultaat</h3>
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 10 }}>
+            Gestart: {new Date(browserTestResult.startedAt).toLocaleTimeString("nl-NL")}
+            {browserTestResult.pageUrl ? ` · Pagina: ${browserTestResult.pageUrl}` : ""}
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {browserTestResult.fieldResults.map((r, i) => (
+              <li key={`${r.key}-${i}`} style={{ padding: "4px 0", fontSize: 14 }}>
+                {fieldFillIcon[r.status]} {r.label}
+                {r.detail ? ` ${r.detail}` : ""}
+              </li>
+            ))}
+          </ul>
+          {browserTestResult.warnings.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <h4 style={{ margin: "0 0 4px", fontSize: 13 }}>Meldingen</h4>
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 13, color: "#92400e" }}>
+                {browserTestResult.warnings.map((w, i) => (
+                  <li key={i}>⚠ {w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {browserTestResult.errors.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <h4 style={{ margin: "0 0 4px", fontSize: 13 }}>Fouten</h4>
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 13, color: "#991b1b" }}>
+                {browserTestResult.errors.map((e, i) => (
+                  <li key={i}>❌ {e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div style={{ marginTop: 10, fontWeight: 700, color: "#1f3049" }}>
+            Gestopt vóór publicatie — controleer en rond handmatig af in het geopende browservenster.
+          </div>
         </div>
       )}
 

@@ -172,6 +172,66 @@ volledige publish → retrieve → compare → cleanup-flow met een `mock-...`
 advertentie-ID, niets verlaat de server. In live mode: vereist een
 gekoppeld Marktplaats-account (user-token) via "Opnieuw verbinden".
 
+## Browser-test (Playwright) — tijdelijke mapping-verificatie, geen productiepad
+
+Zolang er nog geen bruikbare officiële Marktplaats API-toegang is, kun je de
+veldmapping verifiëren tegen het **echte** marktplaats.nl-formulier met de
+knop "Test op Marktplaats" op `/admin/{productId}`. Dit is uitdrukkelijk
+**geen vervanging** van de toekomstige officiële API-publicatie
+(`lib/marktplaats/publishService.ts`) — beide gebruiken dezelfde
+`buildProductPreview()`-mapping, nooit twee keer gebouwd.
+
+**Architectuur**
+
+- `lib/marktplaats/orchestrator.ts` → `buildProductPreview()` — ongewijzigde
+  centrale mapping/validatie (ook gebruikt door de officiële publish-flow).
+- `lib/marktplaats/browserTest/fieldPlan.ts` → zet een `ProductPreview` om in
+  een generiek, label-gebaseerd invulplan (geen eigen mapping-logica).
+- `lib/marktplaats/browserTest/browserTestPublisher.ts` → de Playwright-driver
+  (`MarktplaatsBrowserTestPublisher`): opent een zichtbare browser, vult
+  velden in op basis van label/role, upload afbeeldingen, **stopt altijd**
+  vóór de definitieve plaatsingsactie.
+- `lib/marktplaats/browserTest/imageDownloader.ts` → download Shopify-CDN
+  afbeeldingen naar een tijdelijke map (opgeruimd na afloop) zodat Playwright
+  ze kan uploaden.
+
+**Alleen lokaal (`npm run dev`), nooit op Vercel/Coolify** — opent een
+zichtbaar browservenster op de machine die het draait; de route weigert
+expliciet te draaien zodra `process.env.VERCEL` gezet is.
+
+**Environment-variabelen** (zie `.env.example`):
+
+- `MARKTPLAATS_BROWSER_TEST=true` — zet lokaal in `.env.local` om de knop te
+  activeren (API-route geeft 403 zolang dit niet "true" is).
+- `MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false` — harde guard. Deze build
+  implementeert zelfs bij `true` geen submit-klik; de advertentie plaats je
+  altijd zelf, handmatig, in het geopende venster.
+- `MARKTPLAATS_BROWSER_PROFILE_DIR` — map voor het persistente
+  Playwright-profiel (login/cookies), default `.marktplaats-browser-profile`,
+  staat in `.gitignore` — nooit committen.
+- `MARKTPLAATS_LISTING_URL` — optioneel, zet dit zodra je de echte
+  "plaats zakelijke advertentie"-URL kent; zonder deze variabele klikt de
+  testfunctie zelf op een "Plaats advertentie"-link vanaf de homepage.
+
+**Login**: geen inloggegevens worden ooit gelezen, opgeslagen of gecommit.
+Bij de eerste run (of een verlopen sessie) herkent de testfunctie het
+Marktplaats-loginscherm, wacht tot je handmatig bent ingelogd in het
+geopende venster, en gaat dan verder — die sessie blijft daarna bewaard in
+het lokale profiel.
+
+**Velden/selectors zijn bewust generiek** (label/role-gebaseerd, geen
+geraden CSS/XPath) omdat de echte paginastructuur nog niet geverifieerd is.
+Labels waarvan we vermoeden dat de echte pagina een andere tekst gebruikt
+staan in `LABEL_OVERRIDES` (`fieldPlan.ts`) — pas deze aan zodra je de
+werkelijke pagina hebt gezien. Een veld dat niet gevonden wordt crasht de
+hele run niet: het komt terug als "⚠ niet gevonden" in de resultaatlijst en
+de overige velden worden gewoon geprobeerd.
+
+**Resultaatweergave**: de knop toont per veld ✓ (ingevuld/geselecteerd),
+⚠ (niet gevonden) of ❌ (fout), plus hoeveel afbeeldingen zijn geüpload en
+eventuele meldingen/fouten — zodat je in één oogopslag ziet wat (niet) is
+gelukt zonder de browserconsole te hoeven openen.
+
 ## Stappen: eerste echte advertentie publiceren
 
 1. Vraag een Marktplaats-verkopersaccount met API-toegang aan; vul

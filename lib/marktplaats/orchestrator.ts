@@ -1,5 +1,6 @@
 import { getProduct, getStructuredFields, ShopifyProduct } from "../shopify/client";
 import { getTemplate } from "../templates/registry";
+import { ProductTemplate } from "../templates/types";
 import { getCategoryMapping } from "./categoryService";
 import { getAttributesForProductType } from "./attributeCache";
 import { mapProductToAttributes, AttributeMappingResult } from "./mappingEngine";
@@ -21,6 +22,16 @@ export interface ProductPreview {
   validation: ValidationResult;
   payloadPreview: ReturnType<typeof buildMarktplaatsPayload>;
   imageUrls: string[];
+  /**
+   * Resolved template + per-field data (incl. template defaults) used to
+   * build this preview. Exposed so other consumers (e.g. the Playwright
+   * browser-test publisher) can build their own view without re-deriving
+   * or duplicating the Shopify → Marktplaats mapping (rule: single mapping,
+   * reused everywhere — see lib/marktplaats/browserTest/fieldPlan.ts).
+   */
+  template: ProductTemplate;
+  data: Record<string, string>;
+  price: number;
 }
 
 async function getStoredOverrides(shopifyProductId: string): Promise<{ customTitle?: string; customDescription?: string }> {
@@ -96,5 +107,8 @@ export async function buildProductPreview(shopifyProductId: string): Promise<Pro
     validation,
     payloadPreview,
     imageUrls,
+    template,
+    data,
+    price,
   };
 }
