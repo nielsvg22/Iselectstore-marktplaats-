@@ -11,7 +11,7 @@ import {
   stopBeforeSubmit,
   SubmitNotAllowedError,
 } from "./config";
-import { BrowserTestRun, compactMessage, recordStatus, setState, waitForVerificationCode } from "./status";
+import { BrowserTestRun, compactMessage, isStopRequested, recordStatus, setState, waitForVerificationCode } from "./status";
 import {
   CORE_FIELD_SELECTORS,
   SelectorCandidate,
@@ -94,6 +94,14 @@ const PAYMENT_URL_PATTERN = /\/payments\/|\/checkout\/|ideal\.nl/i;
 const PAYMENT_HEADING_PATTERN = /^betaal|^betalen|betaalmethode|winkelwagen/i;
 
 const MAX_ADVANCES = 4;
+
+/** Thrown when requestStop() is called for this run — a user clicked "Stop test". */
+class StoppedByUserError extends Error {
+  constructor() {
+    super("Test gestopt door gebruiker.");
+    this.name = "StoppedByUserError";
+  }
+}
 
 export class MarktplaatsBrowserTestPublisher {
   private readonly config: BrowserTestConfig;
@@ -179,8 +187,21 @@ export class MarktplaatsBrowserTestPublisher {
       await this.snapshot(page, "03-formulier-gevuld");
 
       await this.stopBeforeSubmitStep(page);
+    } catch (err) {
+      if (err instanceof StoppedByUserError) {
+        recordStatus(this.run, { field: "Gestopt", status: "info", detail: "Test gestopt — browser is gesloten." });
+        setState(this.run, "failed", "Gestopt door gebruiker");
+        const ctx = getActiveContext();
+        if (ctx) {
+          await ctx.close().catch(() => {});
+          setActiveContext(null);
+        }
+        return;
+      }
+      throw err;
     } finally {
-      // Never close the browser: it must stay open for manual inspection.
+      // Never close the browser on a normal finish: it must stay open for
+      // manual inspection. A user-requested stop closes it explicitly above.
       await cleanupImageDir(this.imageDir);
       this.imageDir = null;
       await page.bringToFront().catch(() => {});
@@ -262,6 +283,8 @@ export class MarktplaatsBrowserTestPublisher {
     let autoLoginAttempted = false;
 
     for (;;) {
+      if (isStopRequested(this.run)) throw new StoppedByUserError();
+
       if (await this.isLoggedIn(page)) {
         this.ok("Login", waitingLogged ? "Ingelogd — sessie lokaal opgeslagen in het Playwright-profiel" : "Bestaande sessie hergebruikt");
         if (/login|inloggen|signin/i.test(page.url())) {
@@ -347,6 +370,7 @@ export class MarktplaatsBrowserTestPublisher {
     });
 
     const code = await waitForVerificationCode(this.run.runId, this.config.loginTimeoutMs);
+    if (isStopRequested(this.run)) throw new StoppedByUserError();
     if (!code) {
       this.warn(
         "Verificatiecode",

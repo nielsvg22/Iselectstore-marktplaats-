@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
       setState(run, "failed", message);
       await safeLog("browser_test_error", shopifyProductId, message);
     } finally {
-      if (run.state === "queued" || run.state === "running" || run.state === "waiting_login") {
+      if (run.state === "queued" || run.state === "running" || run.state === "waiting_login" || run.state === "waiting_code") {
         setState(run, "done", run.message ?? "Klaar");
       }
     }

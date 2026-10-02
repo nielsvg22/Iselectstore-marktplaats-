@@ -200,6 +200,31 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
     if (data?.runId) setBrowserRunId(data.runId);
   }
 
+  const browserRunActive = Boolean(
+    browserRun &&
+      (browserRun.state === "queued" ||
+        browserRun.state === "running" ||
+        browserRun.state === "waiting_login" ||
+        browserRun.state === "waiting_code")
+  );
+
+  async function stopBrowserTest() {
+    if (!browserRun) return;
+    setLoading("stopbrowsertest");
+    try {
+      await fetch("/api/marktplaats/browser-test/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: browserRun.runId }),
+      });
+      // Polling (already running for this runId) picks up the resulting state.
+    } catch {
+      /* the next poll reflects whatever actually happened */
+    } finally {
+      setLoading(null);
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {productType && <AIRecognitionPanel shopifyProductId={shopifyProductId} productType={productType} />}
@@ -226,6 +251,16 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
         >
           {loading === "browsertest" ? "Bezig…" : "Test op Marktplaats"}
         </button>
+        {browserRunActive && (
+          <button
+            onClick={stopBrowserTest}
+            disabled={loading !== null && loading !== "stopbrowsertest"}
+            title="Stopt de lopende browsertest en sluit de browser direct — geen herdeploy nodig."
+            style={{ ...btnStyle(), borderColor: "#dc2626", color: "#dc2626" }}
+          >
+            {loading === "stopbrowsertest" ? "Bezig…" : "Stop test"}
+          </button>
+        )}
         <button onClick={fullApiTest} disabled={loading !== null} style={btnStyle()}>
           {loading === "fulltest" ? "Bezig…" : "Volledige Marktplaats API-test"}
         </button>

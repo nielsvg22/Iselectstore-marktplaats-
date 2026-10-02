@@ -29,6 +29,8 @@ export interface BrowserTestRun {
   /** URL of the advertisement after a successful test placement. */
   postedUrl?: string;
   statuses: FieldStatus[];
+  /** Set by requestStop() — polled cooperatively by the running Playwright flow. */
+  stopRequested?: boolean;
 }
 
 interface RunStore {
@@ -123,6 +125,31 @@ export function submitVerificationCode(runId: string, code: string): boolean {
   waiters.delete(runId);
   pending.resolve(code.trim());
   return true;
+}
+
+/**
+ * Called by the browser-test/stop API route so a stuck run (waiting on a
+ * manual login, a 2FA code, or any long Playwright step) can be killed from
+ * the admin UI without redeploying the app. Cooperative: the Playwright flow
+ * checks isStopRequested() at its wait points and unwinds itself, closing the
+ * browser on the way out — see MarktplaatsBrowserTestPublisher.
+ */
+export function requestStop(runId: string): boolean {
+  const run = getRun(runId);
+  if (!run || !isRunActive(runId)) return false;
+  run.stopRequested = true;
+  // A pending 2FA-code wait would otherwise block for the full login timeout.
+  const waiters = codeWaiters();
+  const pending = waiters.get(runId);
+  if (pending) {
+    waiters.delete(runId);
+    pending.resolve(null);
+  }
+  return true;
+}
+
+export function isStopRequested(run: BrowserTestRun): boolean {
+  return Boolean(run.stopRequested);
 }
 
 /**
