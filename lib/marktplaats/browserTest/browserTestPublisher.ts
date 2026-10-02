@@ -443,10 +443,38 @@ export class MarktplaatsBrowserTestPublisher {
       });
 
       await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => {});
-      this.info("Login (auto)", `Formulier verzonden — pagina na inloggen: ${page.url()}`);
+      await page.waitForTimeout(800).catch(() => {});
+
+      const stillOnLogin = /\/login|inloggen|signin|\/auth/i.test(page.url());
+      if (stillOnLogin) {
+        const pageError = await this.readLoginError(page);
+        this.warn(
+          "Login (auto)",
+          `Nog op de inlogpagina na verzenden${pageError ? ` — melding: "${pageError}"` : " (geen foutmelding zichtbaar)"}`
+        );
+      } else {
+        this.info("Login (auto)", `Formulier verzonden — pagina na inloggen: ${page.url()}`);
+      }
     } catch (err) {
       this.warn("Login (auto)", `Automatisch inloggen mislukt (${this.errMsg(err)}) — val terug op handmatig inloggen. Pagina: ${page.url()}`);
     }
+  }
+
+  /** Reads a visible inline error (e.g. "onjuiste combinatie") near the login form, if any. */
+  private async readLoginError(page: Page): Promise<string> {
+    try {
+      const nodes = page.locator(
+        '[role="alert"], .hz-Text--error, .InputFeedback--error, [data-testid*="error"], [class*="error" i]:visible'
+      );
+      const count = await nodes.count().catch(() => 0);
+      for (let i = 0; i < Math.min(count, 5); i += 1) {
+        const text = (await nodes.nth(i).innerText().catch(() => "")).trim().replace(/\s+/g, " ");
+        if (text.length > 0) return text.slice(0, 200);
+      }
+    } catch {
+      /* best-effort diagnostic only */
+    }
+    return "";
   }
 
   private async isLoggedIn(page: Page): Promise<boolean> {
