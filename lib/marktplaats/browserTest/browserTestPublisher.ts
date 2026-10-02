@@ -677,6 +677,29 @@ export class MarktplaatsBrowserTestPublisher {
     return [...new Set(out.filter((p) => p.length > 0))];
   }
 
+  /**
+   * Diagnostic only: the real label text currently visible on the form, so a
+   * field that no alias matches can be fixed from the run status alone
+   * instead of needing a screenshot of the live browser.
+   */
+  private async listVisibleLabels(page: Page): Promise<string> {
+    try {
+      const labels = await page.evaluate(() => {
+        const texts = new Set<string>();
+        document.querySelectorAll("label").forEach((el) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          const text = (el.textContent ?? "").trim().replace(/\s+/g, " ");
+          if (text.length > 0 && text.length < 60) texts.add(text);
+        });
+        return [...texts];
+      });
+      return labels.slice(0, 40).join(" | ");
+    } catch {
+      return "";
+    }
+  }
+
   private async optionPreview(select: Locator): Promise<string> {
     const texts = await select
       .evaluate((el) => [...(el as HTMLSelectElement).options].map((o) => o.textContent?.trim() ?? ""))
@@ -899,13 +922,24 @@ export class MarktplaatsBrowserTestPublisher {
     const resolved = await this.waitForResolve(page, params.candidates, params.timeoutMs);
     if (!resolved) {
       const tried = params.candidates.length;
-      // A key still carrying the mock_ prefix comes from the placeholder API
-      // schema, so its absence on the live form is expected, not a defect.
-      if (params.marktplaatsKey?.startsWith("mock_")) {
-        this.info(label, `geen echt Marktplaats-attribuut (mapping-sleutel ${params.marktplaatsKey})`);
-      } else if (expects) {
-        this.warn(label, `niet gevonden op het Marktplaats-formulier (${tried} selectoren geprobeerd)`);
+      // expects (expectsMarktplaatsField) must win over the mock_ check: while
+      // every category mapping here is still "UNVERIFIED", attributeCache.ts
+      // forces mock mode unconditionally, so EVERY field's marktplaatsKey
+      // carries the mock_ prefix — including fields that genuinely exist on
+      // the real form. Checking mock_ first silently downgraded real misses
+      // (e.g. storage_gb on MacBook) to a harmless-looking "info" line that
+      // never even reached maybeAdvance()'s retry-after-"Volgende" logic.
+      if (expects) {
+        const nearby = await this.listVisibleLabels(page);
+        this.warn(
+          label,
+          `niet gevonden op het Marktplaats-formulier (${tried} selectoren geprobeerd)${
+            nearby ? ` — zichtbare labels op de pagina: ${nearby}` : ""
+          }`
+        );
         this.unfilled.push(label);
+      } else if (params.marktplaatsKey?.startsWith("mock_")) {
+        this.info(label, `geen echt Marktplaats-attribuut (mapping-sleutel ${params.marktplaatsKey})`);
       } else {
         this.info(label, `geen bijpassend Marktplaats-veld (${tried} selectoren geprobeerd)`);
       }
