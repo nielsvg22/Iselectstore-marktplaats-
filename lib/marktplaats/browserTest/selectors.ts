@@ -39,6 +39,9 @@ export const FIELD_LABEL_ALIASES: Record<string, string[]> = {
     "Geheugen",
     "Capaciteit",
     "Opslagcapaciteit (GB)",
+    // Confirmed live on Computers en Software > Laptops (02-10-2026): the
+    // real label is "Totale opslagcapaciteit", not just "Opslagcapaciteit".
+    "Totale opslagcapaciteit",
     // Laptops/desktops (Computers en Software) phrase this differently than
     // phones — Marktplaats shows disk/drive wording here, not "Opslag".
     "Harde schijf",
@@ -285,6 +288,16 @@ export function buildAttributeCandidates(params: {
       pattern: String(new RegExp(`^${escapeRegExp(pattern)}(\\s*\\(.*\\))?\\s*:?$`, "i")),
       note: `combobox "${pattern}"`,
     });
+  }
+
+  // Last-resort label fallback: an unanchored "contains" match, tried only
+  // after every exact candidate above has failed. Catches real-world labels
+  // with an extra qualifier Marktplaats added that no alias predicted yet
+  // (e.g. "Totale opslagcapaciteit" vs. our "Opslagcapaciteit" alias) without
+  // having to enumerate every such prefix/suffix by hand.
+  for (const pattern of patterns) {
+    const contains = new RegExp(escapeRegExp(pattern), "i");
+    candidates.push({ strategy: "label", pattern: String(contains), note: `label bevat "${pattern}"` });
   }
 
   const field = params.internalField;
