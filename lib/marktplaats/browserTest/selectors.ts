@@ -33,7 +33,27 @@ export type FormFieldKind = "text" | "textarea" | "select" | "number" | "file";
  */
 export const FIELD_LABEL_ALIASES: Record<string, string[]> = {
   model: ["Model", "Type", "Uitvoering"],
-  storage_gb: ["Opslagcapaciteit", "Opslag", "Geheugen", "Capaciteit", "Opslagcapaciteit (GB)"],
+  storage_gb: [
+    "Opslagcapaciteit",
+    "Opslag",
+    "Geheugen",
+    "Capaciteit",
+    "Opslagcapaciteit (GB)",
+    // Laptops/desktops (Computers en Software) phrase this differently than
+    // phones — Marktplaats shows disk/drive wording here, not "Opslag".
+    "Harde schijf",
+    "Harde schijf (GB)",
+    "Harde schijf grootte",
+    "Harddisk",
+    "SSD",
+    "SSD-grootte",
+    "SSD grootte",
+    "SSD-opslag",
+    "Opslagruimte",
+    "Opslaggrootte",
+    "Schijfruimte",
+    "Intern geheugen",
+  ],
   color: ["Kleur"],
   condition: ["Conditie", "Staat", "Productstaat"],
   battery_percentage: ["Batterijconditie", "Batterijpercentage", "Batterij", "Accuconditie", "Batterijstaat"],
