@@ -15,7 +15,7 @@ export interface FieldStatus {
   detail?: string;
 }
 
-export type BrowserTestRunState = "queued" | "waiting_login" | "running" | "done" | "failed";
+export type BrowserTestRunState = "queued" | "waiting_login" | "waiting_code" | "running" | "done" | "failed";
 
 export interface BrowserTestRun {
   runId: string;
@@ -69,13 +69,15 @@ export function getRun(runId: string): BrowserTestRun | undefined {
 
 export function isRunActive(runId: string): boolean {
   const run = getRun(runId);
-  return Boolean(run && (run.state === "queued" || run.state === "running" || run.state === "waiting_login"));
+  return Boolean(
+    run && (run.state === "queued" || run.state === "running" || run.state === "waiting_login" || run.state === "waiting_code")
+  );
 }
 
 /** Start an additional run when another one is still going. */
 export function findActiveRun(): BrowserTestRun | undefined {
   return [...store().runs.values()].find(
-    (r) => r.state === "queued" || r.state === "running" || r.state === "waiting_login"
+    (r) => r.state === "queued" || r.state === "running" || r.state === "waiting_login" || r.state === "waiting_code"
   );
 }
 
@@ -97,6 +99,50 @@ export function setState(run: BrowserTestRun, state: BrowserTestRunState, messag
 
 export function serializeRun(run: BrowserTestRun): BrowserTestRun {
   return JSON.parse(JSON.stringify(run)) as BrowserTestRun;
+}
+
+interface PendingCode {
+  resolve: (code: string | null) => void;
+}
+
+function codeWaiters(): Map<string, PendingCode> {
+  const holder = globalThis as typeof globalThis & { __marktplaatsBrowserCodeWaiters?: Map<string, PendingCode> };
+  if (!holder.__marktplaatsBrowserCodeWaiters) holder.__marktplaatsBrowserCodeWaiters = new Map();
+  return holder.__marktplaatsBrowserCodeWaiters;
+}
+
+/**
+ * Called by the browser-test/code API route once the user types a
+ * verification code into the admin UI. Returns false when no run is
+ * currently waiting for one (e.g. already timed out).
+ */
+export function submitVerificationCode(runId: string, code: string): boolean {
+  const waiters = codeWaiters();
+  const pending = waiters.get(runId);
+  if (!pending) return false;
+  waiters.delete(runId);
+  pending.resolve(code.trim());
+  return true;
+}
+
+/**
+ * Called from the Playwright flow when Marktplaats shows a 2FA/SMS
+ * challenge. Resolves with the code once submitVerificationCode() is called
+ * for this run, or null if nobody submitted one within timeoutMs.
+ */
+export function waitForVerificationCode(runId: string, timeoutMs: number): Promise<string | null> {
+  const waiters = codeWaiters();
+  return new Promise<string | null>((resolve) => {
+    waiters.set(runId, { resolve });
+    const timer = setTimeout(() => {
+      if (waiters.get(runId)?.resolve === resolve) {
+        waiters.delete(runId);
+        resolve(null);
+      }
+    }, timeoutMs);
+    // Node timers keep the process alive; this one must not block shutdown.
+    if (typeof timer === "object" && "unref" in timer) (timer as unknown as { unref: () => void }).unref();
+  });
 }
 
 /**

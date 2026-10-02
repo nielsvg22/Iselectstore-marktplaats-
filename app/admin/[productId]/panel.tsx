@@ -22,7 +22,7 @@ interface BrowserFieldStatus {
 interface BrowserTestRun {
   runId: string;
   shopifyProductId: string;
-  state: "queued" | "waiting_login" | "running" | "done" | "failed";
+  state: "queued" | "waiting_login" | "waiting_code" | "running" | "done" | "failed";
   startedAt: string;
   finishedAt?: string;
   title?: string;
@@ -84,6 +84,7 @@ const browserStatusIcon: Record<BrowserFieldStatusKind, string> = {
 const browserStateLabel: Record<BrowserTestRun["state"], string> = {
   queued: "wordt gestart…",
   waiting_login: "wacht op handmatige login",
+  waiting_code: "wacht op verificatiecode",
   running: "bezig met invullen…",
   done: "klaar",
   failed: "mislukt",
@@ -332,9 +333,28 @@ function formatPrice(cents: number | undefined): string {
  * selector matched and which field Marktplaats did not offer.
  */
 function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserTestRun; novncUrl: string | null; novncPassword: string | null }) {
-  const isActive = run.state === "queued" || run.state === "running" || run.state === "waiting_login";
+  const isActive = run.state === "queued" || run.state === "running" || run.state === "waiting_login" || run.state === "waiting_code";
   const accent = run.state === "failed" ? "#dc2626" : isActive ? "#b45309" : "#16a34a";
   const showViewer = isActive && Boolean(novncUrl);
+  const [code, setCode] = useState("");
+  const [codeStatus, setCodeStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+
+  async function submitCode() {
+    if (!code.trim()) return;
+    setCodeStatus("sending");
+    try {
+      const res = await fetch("/api/marktplaats/browser-test/code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: run.runId, code }),
+      });
+      if (!res.ok) throw new Error();
+      setCodeStatus("sent");
+      setCode("");
+    } catch {
+      setCodeStatus("error");
+    }
+  }
 
   return (
     <div style={{ ...cardStyle(), borderColor: accent }}>
@@ -346,12 +366,39 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
         </span>
       </h3>
 
+      {run.state === "waiting_code" && (
+        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e", marginBottom: 8 }}>
+            Marktplaats vraagt een verificatiecode (SMS/e-mail) — typ hem hieronder in:
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              inputMode="numeric"
+              autoFocus
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+                setCodeStatus("idle");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitCode();
+              }}
+              placeholder="123456"
+              style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 }}
+            />
+            <button onClick={submitCode} disabled={codeStatus === "sending" || !code.trim()} style={btnStyle(true)}>
+              {codeStatus === "sending" ? "Bezig…" : "Versturen"}
+            </button>
+          </div>
+          {codeStatus === "sent" && <div style={{ marginTop: 6, fontSize: 13, color: "#16a34a" }}>Code verstuurd naar de browser.</div>}
+          {codeStatus === "error" && <div style={{ marginTop: 6, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
+        </div>
+      )}
+
       {showViewer && (
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 6 }}>
-            {run.state === "waiting_login"
-              ? "Live browser — tik hieronder als Marktplaats een verificatiecode vraagt:"
-              : "Live browser:"}
+            {run.state === "waiting_login" ? "Live browser — log hieronder handmatig in als dat nodig is:" : "Live browser:"}
           </div>
           <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 10", borderRadius: 10, overflow: "hidden", border: "1px solid #e7e9ec", background: "#111" }}>
             <iframe

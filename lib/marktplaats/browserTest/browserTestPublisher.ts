@@ -11,7 +11,7 @@ import {
   stopBeforeSubmit,
   SubmitNotAllowedError,
 } from "./config";
-import { BrowserTestRun, compactMessage, recordStatus, setState } from "./status";
+import { BrowserTestRun, compactMessage, recordStatus, setState, waitForVerificationCode } from "./status";
 import {
   CORE_FIELD_SELECTORS,
   SelectorCandidate,
@@ -101,6 +101,7 @@ export class MarktplaatsBrowserTestPublisher {
   private unfilled: string[] = [];
   private advances = 0;
   private debugFiles: string[] = [];
+  private cookiesHandled = false;
 
   constructor(private readonly run: BrowserTestRun) {
     this.config = getBrowserTestConfig();
@@ -144,6 +145,7 @@ export class MarktplaatsBrowserTestPublisher {
 
     try {
       await this.openPlacementPage(page);
+      await this.autoAcceptCookies(page);
       await this.snapshot(page, "00-plaatsingspagina");
       await this.ensureLoggedIn(page);
       await this.snapshot(page, "01-ingelogd");
@@ -268,6 +270,13 @@ export class MarktplaatsBrowserTestPublisher {
         return;
       }
 
+      await this.autoAcceptCookies(page);
+
+      if (await this.isVerificationChallenge(page)) {
+        await this.handleVerificationChallenge(page);
+        continue; // re-check isLoggedIn() immediately with the loop's top
+      }
+
       if (!autoLoginAttempted && this.config.username && this.config.password) {
         autoLoginAttempted = true;
         await this.attemptAutoLogin(page, this.config.username, this.config.password);
@@ -296,6 +305,102 @@ export class MarktplaatsBrowserTestPublisher {
   }
 
   /**
+   * Marktplaats shows a cookie banner on first load of a fresh profile —
+   * accept it ourselves so it never blocks the login/2FA flow underneath.
+   * Best-effort and only ever attempted once per run.
+   */
+  private async autoAcceptCookies(page: Page): Promise<void> {
+    if (this.cookiesHandled) return;
+    try {
+      const accept = page.getByRole("button", { name: /^accepteren$/i }).first();
+      const visible = await accept.isVisible({ timeout: 1500 }).catch(() => false);
+      if (!visible) return;
+      await accept.click({ timeout: 3000 });
+      this.cookiesHandled = true;
+      this.info("Cookies", "Cookiemelding automatisch geaccepteerd");
+      await page.waitForTimeout(300).catch(() => {});
+    } catch {
+      /* no cookie banner visible right now — nothing to do */
+    }
+  }
+
+  /** Detects Marktplaats' SMS/e-mail verification ("Beveiligingscontrole") step. */
+  private async isVerificationChallenge(page: Page): Promise<boolean> {
+    if (/two-factor-auth|2fa|challenge/i.test(page.url())) return true;
+    const heading = await page.locator("h1, h2").first().innerText().catch(() => "");
+    return /beveiligingscontrole|verificatiecode|voer de code in|tweestapsverificatie/i.test(heading);
+  }
+
+  /**
+   * Marktplaats asked for an SMS/e-mail verification code. Rather than make
+   * someone switch into the embedded noVNC view to type it, the run pauses
+   * in "waiting_code" state and the admin UI collects the code and posts it
+   * to POST /api/marktplaats/browser-test/code, which resolves
+   * waitForVerificationCode() below.
+   */
+  private async handleVerificationChallenge(page: Page): Promise<void> {
+    setState(this.run, "waiting_code", "Marktplaats vraagt een verificatiecode");
+    recordStatus(this.run, {
+      field: "Verificatiecode",
+      status: "info",
+      detail: "Vul de SMS/e-mailcode in via het invoerveld hierboven in het adminpaneel.",
+    });
+
+    const code = await waitForVerificationCode(this.run.runId, this.config.loginTimeoutMs);
+    if (!code) {
+      this.warn(
+        "Verificatiecode",
+        `Geen code ontvangen binnen ${Math.round(this.config.loginTimeoutMs / 1000)}s — vul 'm zelf in via de live browser.`
+      );
+      return;
+    }
+
+    const filled = await this.enterVerificationCode(page, code);
+    if (filled) {
+      this.ok("Verificatiecode", "Code ingevuld en verzonden");
+    } else {
+      this.warn("Verificatiecode", "Kon het invoerveld voor de code niet vinden — vul 'm zelf in via de live browser.");
+    }
+  }
+
+  /**
+   * Fills a Marktplaats verification code, which may render either as one
+   * field or as several single-digit boxes depending on the challenge type.
+   */
+  private async enterVerificationCode(page: Page, rawCode: string): Promise<boolean> {
+    const digits = rawCode.replace(/\D/g, "");
+    if (!digits) return false;
+
+    try {
+      const boxes = page.locator('input[type="tel"], input[inputmode="numeric"], input[autocomplete="one-time-code"]');
+      const count = await boxes.count().catch(() => 0);
+      if (count > 1 && count >= digits.length) {
+        for (let i = 0; i < digits.length; i += 1) {
+          await boxes.nth(i).fill(digits[i]).catch(() => {});
+        }
+      } else {
+        const single = page
+          .getByLabel(/code|verificatie/i)
+          .or(page.locator('input[name*="code" i]'))
+          .or(boxes.first())
+          .first();
+        if ((await single.count().catch(() => 0)) === 0) return false;
+        await single.fill(digits);
+      }
+
+      const submit = page.getByRole("button", { name: /verstuur|bevestig|volgende|verifieer/i }).first();
+      await submit.click({ timeout: 5000 }).catch(async () => {
+        await page.keyboard.press("Enter").catch(() => {});
+      });
+      await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => {});
+      return true;
+    } catch (err) {
+      this.warn("Verificatiecode", `Invullen mislukt: ${this.errMsg(err)}`);
+      return false;
+    }
+  }
+
+  /**
    * Fills and submits the real Marktplaats login form with
    * MARKTPLAATS_USERNAME / MARKTPLAATS_PASSWORD. Best-effort and silent on
    * failure — isLoggedIn() is re-checked by the caller's loop either way, so
@@ -308,6 +413,7 @@ export class MarktplaatsBrowserTestPublisher {
       if (!/\/login|inloggen|signin|\/auth/i.test(page.url())) {
         await page.goto(`${this.config.baseUrl}/inloggen`, { waitUntil: "domcontentloaded" }).catch(() => {});
       }
+      await this.autoAcceptCookies(page);
 
       const usernameField = page
         .getByLabel(/e-?mail|gebruikersnaam|inlognaam/i)
