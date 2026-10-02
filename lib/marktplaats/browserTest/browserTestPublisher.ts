@@ -408,7 +408,11 @@ export class MarktplaatsBrowserTestPublisher {
    * rather than crashing the run.
    */
   private async attemptAutoLogin(page: Page, username: string, password: string): Promise<void> {
-    this.info("Login", "Automatisch inloggen met MARKTPLAATS_USERNAME/MARKTPLAATS_PASSWORD…");
+    // Distinct field key from "Login" on purpose: that key gets overwritten
+    // by the later "wacht op handmatige login" status once this returns, so
+    // the outcome of the auto-login attempt would otherwise disappear from
+    // the UI even when it failed.
+    this.info("Login (auto)", "Automatisch inloggen met MARKTPLAATS_USERNAME/MARKTPLAATS_PASSWORD…");
     try {
       if (!/\/login|inloggen|signin|\/auth/i.test(page.url())) {
         await page.goto(`${this.config.baseUrl}/inloggen`, { waitUntil: "domcontentloaded" }).catch(() => {});
@@ -439,8 +443,9 @@ export class MarktplaatsBrowserTestPublisher {
       });
 
       await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => {});
+      this.info("Login (auto)", `Formulier verzonden — pagina na inloggen: ${page.url()}`);
     } catch (err) {
-      this.warn("Login", `Automatisch inloggen mislukt (${this.errMsg(err)}) — val terug op handmatig inloggen.`);
+      this.warn("Login (auto)", `Automatisch inloggen mislukt (${this.errMsg(err)}) — val terug op handmatig inloggen. Pagina: ${page.url()}`);
     }
   }
 
