@@ -103,6 +103,38 @@ export function serializeRun(run: BrowserTestRun): BrowserTestRun {
   return JSON.parse(JSON.stringify(run)) as BrowserTestRun;
 }
 
+interface PendingLogin {
+  username: string;
+  password: string;
+}
+
+function loginSubmissions(): Map<string, PendingLogin> {
+  const holder = globalThis as typeof globalThis & { __marktplaatsBrowserLoginSubmissions?: Map<string, PendingLogin> };
+  if (!holder.__marktplaatsBrowserLoginSubmissions) holder.__marktplaatsBrowserLoginSubmissions = new Map();
+  return holder.__marktplaatsBrowserLoginSubmissions;
+}
+
+/**
+ * Called by the browser-test/login API route when the user types their
+ * Marktplaats e-mail/wachtwoord into the admin UI instead of switching into
+ * the embedded noVNC view. Never persisted — read once by
+ * takeSubmittedLogin() and discarded immediately.
+ */
+export function submitLoginCredentials(runId: string, username: string, password: string): boolean {
+  if (!isRunActive(runId)) return false;
+  loginSubmissions().set(runId, { username, password });
+  return true;
+}
+
+/** Polled by ensureLoggedIn()'s loop; returns and clears any pending submission. */
+export function takeSubmittedLogin(runId: string): PendingLogin | null {
+  const map = loginSubmissions();
+  const entry = map.get(runId);
+  if (!entry) return null;
+  map.delete(runId);
+  return entry;
+}
+
 interface PendingCode {
   resolve: (code: string | null) => void;
 }

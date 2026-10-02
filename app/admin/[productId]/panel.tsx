@@ -373,6 +373,26 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
   const showViewer = isActive && Boolean(novncUrl);
   const [code, setCode] = useState("");
   const [codeStatus, setCodeStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginStatus, setLoginStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+
+  async function submitLogin() {
+    if (!loginUsername.trim() || !loginPassword) return;
+    setLoginStatus("sending");
+    try {
+      const res = await fetch("/api/marktplaats/browser-test/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: run.runId, username: loginUsername, password: loginPassword }),
+      });
+      if (!res.ok) throw new Error();
+      setLoginStatus("sent");
+      setLoginPassword("");
+    } catch {
+      setLoginStatus("error");
+    }
+  }
 
   async function submitCode() {
     if (!code.trim()) return;
@@ -400,6 +420,51 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
           {isActive ? "…" : ""}
         </span>
       </h3>
+
+      {run.state === "waiting_login" && (
+        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e", marginBottom: 8 }}>
+            Niet ingelogd — typ hieronder je Marktplaats-inloggegevens in (of log zelf in via de live browser):
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              type="email"
+              autoComplete="username"
+              autoFocus
+              value={loginUsername}
+              onChange={(e) => {
+                setLoginUsername(e.target.value);
+                setLoginStatus("idle");
+              }}
+              placeholder="e-mailadres"
+              style={{ flex: "1 1 180px", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 15 }}
+            />
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={loginPassword}
+              onChange={(e) => {
+                setLoginPassword(e.target.value);
+                setLoginStatus("idle");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitLogin();
+              }}
+              placeholder="wachtwoord"
+              style={{ flex: "1 1 160px", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 15 }}
+            />
+            <button
+              onClick={submitLogin}
+              disabled={loginStatus === "sending" || !loginUsername.trim() || !loginPassword}
+              style={btnStyle(true)}
+            >
+              {loginStatus === "sending" ? "Bezig…" : "Inloggen"}
+            </button>
+          </div>
+          {loginStatus === "sent" && <div style={{ marginTop: 6, fontSize: 13, color: "#16a34a" }}>Inloggegevens verstuurd naar de browser.</div>}
+          {loginStatus === "error" && <div style={{ marginTop: 6, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
+        </div>
+      )}
 
       {run.state === "waiting_code" && (
         <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12 }}>

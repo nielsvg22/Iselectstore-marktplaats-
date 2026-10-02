@@ -11,7 +11,15 @@ import {
   stopBeforeSubmit,
   SubmitNotAllowedError,
 } from "./config";
-import { BrowserTestRun, compactMessage, isStopRequested, recordStatus, setState, waitForVerificationCode } from "./status";
+import {
+  BrowserTestRun,
+  compactMessage,
+  isStopRequested,
+  recordStatus,
+  setState,
+  takeSubmittedLogin,
+  waitForVerificationCode,
+} from "./status";
 import {
   CORE_FIELD_SELECTORS,
   SelectorCandidate,
@@ -270,12 +278,15 @@ export class MarktplaatsBrowserTestPublisher {
   }
 
   /**
-   * No credentials are ever stored in code. With MARKTPLAATS_USERNAME /
-   * MARKTPLAATS_PASSWORD set (env vars only — see config.ts) this fills and
-   * submits the real login form itself once; without them it falls back to
-   * the original behaviour of simply waiting (default 5 min) for a manual
-   * login. The persistent profile stores the session either way, so this
-   * only ever runs again after the profile is wiped/expired.
+   * No credentials are ever stored in code. Three ways to get logged in, all
+   * equally valid at every loop iteration: (1) MARKTPLAATS_USERNAME /
+   * MARKTPLAATS_PASSWORD env vars trigger one automatic attempt, (2) the
+   * admin UI's login fields (POST .../login) submit credentials once via
+   * takeSubmittedLogin() — never persisted, (3) logging in by hand in the
+   * embedded/noVNC browser works too, since isLoggedIn() is polled every
+   * iteration regardless of how the session got there. The persistent
+   * profile stores the session either way, so this only runs again after the
+   * profile is wiped/expired.
    */
   private async ensureLoggedIn(page: Page): Promise<void> {
     const deadline = Date.now() + this.config.loginTimeoutMs;
@@ -297,6 +308,12 @@ export class MarktplaatsBrowserTestPublisher {
 
       if (await this.isVerificationChallenge(page)) {
         await this.handleVerificationChallenge(page);
+        continue; // re-check isLoggedIn() immediately with the loop's top
+      }
+
+      const submittedLogin = takeSubmittedLogin(this.run.runId);
+      if (submittedLogin) {
+        await this.attemptAutoLogin(page, submittedLogin.username, submittedLogin.password);
         continue; // re-check isLoggedIn() immediately with the loop's top
       }
 
