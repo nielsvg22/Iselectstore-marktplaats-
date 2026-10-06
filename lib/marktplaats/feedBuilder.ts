@@ -1,6 +1,7 @@
 import { listProducts } from "../shopify/client";
 import { buildProductPreview } from "./orchestrator";
 import { getTemplate } from "../templates/registry";
+import { getAttributeMapping } from "./mappingEngine";
 
 /**
  * Builds the XML feed Marktplaats Zakelijk/Admarkt polls once a day (see
@@ -47,19 +48,28 @@ function sanitizeText(value: string): string {
     .trim();
 }
 
-function buildAttributesXml(attributeResults: { status: string; marktplaatsAttributeKey: string | null; marktplaatsValue: string | number | null }[]): string {
-  const entries = attributeResults.filter(
-    (r) => r.status === "mapped" && r.marktplaatsAttributeKey && !r.marktplaatsAttributeKey.startsWith("mock_") && r.marktplaatsValue !== null
-  );
+/**
+ * Builds <attributes> straight from the discovered real key (DB) + Shopify
+ * value — deliberately NOT via mappingEngine.mapProductToAttributes(), which
+ * also requires the key to exist in attributeCache's category-attribute
+ * catalog. That catalog is always the mock_-prefixed set here (every
+ * category mapping in this deployment is DB-driven, not the live API's),
+ * so a real discovered key (e.g. "storage") never matches an entry there
+ * and gets wrongly rejected as "no_matching_attribute" even though the
+ * browser test just proved the field exists and the value fits.
+ */
+async function buildAttributesXml(l2CategoryId: string, data: Record<string, string>, attributeFields: string[]): Promise<string> {
+  const fieldMapping = await getAttributeMapping(l2CategoryId);
+  const entries = attributeFields
+    .map((field) => ({ field, key: fieldMapping[field], value: data[field] }))
+    .filter((e) => e.key && e.value && e.value.trim().length > 0);
   if (entries.length === 0) return "";
   const items = entries
     .map(
-      (r) =>
+      (e) =>
         `      <admarkt:attribute>\n        <admarkt:attributeName>${xmlEscape(
-          r.marktplaatsAttributeKey as string
-        )}</admarkt:attributeName>\n        <admarkt:attributeValue>${xmlEscape(
-          String(r.marktplaatsValue)
-        )}</admarkt:attributeValue>\n      </admarkt:attribute>`
+          e.key
+        )}</admarkt:attributeName>\n        <admarkt:attributeValue>${xmlEscape(e.value)}</admarkt:attributeValue>\n      </admarkt:attribute>`
     )
     .join("\n");
   return `    <admarkt:attributes>\n${items}\n    </admarkt:attributes>\n`;
@@ -118,6 +128,7 @@ export async function buildFeedXml(): Promise<FeedBuildResult> {
     const description = sanitizeText(preview.marktplaatsDescription);
     const condition = CONDITION_MAP[preview.data.condition ?? ""] ?? "used";
     const url = product.handle && storefrontUrl ? `${storefrontUrl}/products/${product.handle}` : undefined;
+    const attributesXml = await buildAttributesXml(l2, preview.data, preview.template.marktplaatsAttributes);
 
     const ad = `  <admarkt:ad>
     <admarkt:externalId>${xmlEscape(id)}</admarkt:externalId>
@@ -127,7 +138,7 @@ export async function buildFeedXml(): Promise<FeedBuildResult> {
     <admarkt:price>${Math.round(preview.price)}</admarkt:price>
     <admarkt:priceType>FIXED_PRICE</admarkt:priceType>
     <admarkt:condition>${condition}</admarkt:condition>
-${url ? `    <admarkt:url>${xmlEscape(url)}</admarkt:url>\n` : ""}${buildAttributesXml(preview.attributeResults)}${buildMediaXml(preview.imageUrls)}  </admarkt:ad>`;
+${url ? `    <admarkt:url>${xmlEscape(url)}</admarkt:url>\n` : ""}${attributesXml}${buildMediaXml(preview.imageUrls)}  </admarkt:ad>`;
 
     ads.push(ad);
   }
