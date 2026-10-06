@@ -2,6 +2,7 @@ import Link from "next/link";
 import { listProducts } from "@/lib/shopify/client";
 import { getConnectionStatus } from "@/lib/marktplaats/connectionService";
 import { getTemplate } from "@/lib/templates/registry";
+import { FeedTestPanel } from "./FeedTestPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,8 @@ export default async function AdminPage() {
           <b>MOCK MODE</b> — er wordt niets naar Marktplaats gestuurd. Alle templates, mapping, validatie en titel/beschrijving-generatie werken wel volledig.
         </div>
       )}
+
+      <FeedTestPanel />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {products.map((p) => {
