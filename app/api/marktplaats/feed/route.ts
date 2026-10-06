@@ -31,7 +31,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ included, skipped });
     }
     // Per Marktplaats' feed docs: serve as text/xml, not as a download.
-    return new NextResponse(xml, { headers: { "Content-Type": "text/xml; charset=ISO-8859-1" } });
+    // The XML prolog and this header both declare ISO-8859-1 — Node's default
+    // string->bytes encoding is UTF-8, so without this the declared charset
+    // and the actual bytes would silently diverge the moment a title or
+    // description contains a Dutch diacritic (ë, ï, ö, …), producing bytes
+    // Marktplaats' parser can't decode. feedBuilder.sanitizeText() already
+    // strips anything outside Latin-1, so this conversion is always safe.
+    const body = Buffer.from(xml, "latin1");
+    return new NextResponse(body, { headers: { "Content-Type": "text/xml; charset=ISO-8859-1" } });
   } catch (err) {
     const message = humanizeError(err instanceof Error ? err.message : String(err));
     await logSync({ action: "feed_error", message });
