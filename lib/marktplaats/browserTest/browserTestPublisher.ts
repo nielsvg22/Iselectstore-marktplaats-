@@ -36,6 +36,8 @@ import {
   downloadImagesForBrowserTest,
 } from "./imageStore";
 import { getActiveContext, setActiveContext } from "./session";
+import { upsertCategoryMapping } from "../categoryService";
+import { setAttributeMapping } from "../mappingEngine";
 
 /**
  * MarktplaatsBrowserTestPublisher — LOCAL/DEV-ONLY Playwright test.
@@ -592,6 +594,8 @@ export class MarktplaatsBrowserTestPublisher {
     ];
 
     let gekozen = 0;
+    let l1Value: string | null = null;
+    let l2Value: string | null = null;
     for (const step of steps) {
       const select = page.locator(step.id).first();
       // The rubric dropdowns hydrate separately from the title field, so a
@@ -612,7 +616,9 @@ export class MarktplaatsBrowserTestPublisher {
       const optie = await this.selectByText(select, step.kandidaten);
       if (optie) {
         gekozen += 1;
-        this.ok(step.naam, optie);
+        this.ok(step.naam, `${optie.text} (id ${optie.value})`);
+        if (step.id === "#cat_sel_1") l1Value = optie.value;
+        if (step.id === "#cat_sel_2") l2Value = optie.value;
         await page.waitForTimeout(800);
       } else {
         this.warn(
@@ -625,6 +631,21 @@ export class MarktplaatsBrowserTestPublisher {
     if (gekozen === 0) {
       this.error("Categorie", "Geen enkele rubriek kon geselecteerd worden.");
       return false;
+    }
+
+    // Marktplaats requires numeric category IDs for the feed/API — ours start
+    // as "UNVERIFIED" placeholders. A successful real selection here proves
+    // the actual IDs, so persist them for reuse (e.g. by the feed builder)
+    // instead of requiring official API access to look them up.
+    if (l1Value && l2Value) {
+      await upsertCategoryMapping({
+        shopifyProductType: draft.productType,
+        l1CategoryId: l1Value,
+        l1CategoryName: draft.category.l1CategoryName,
+        l2CategoryId: l2Value,
+        l2CategoryName: draft.category.l2CategoryName,
+      }).catch((err) => this.warn("Categorie", `Kon ontdekte categorie-ID's niet opslaan: ${this.errMsg(err)}`));
+      this.info("Categorie", `Echte categorie-ID's ontdekt en opgeslagen (L1=${l1Value}, L2=${l2Value})`);
     }
 
     return this.advanceToDetails(page);
@@ -710,7 +731,7 @@ export class MarktplaatsBrowserTestPublisher {
   }
 
   /** Exact → startsWith → contains, so a broad name still picks the right row. */
-  private async selectByText(select: Locator, candidates: string[]): Promise<string | null> {
+  private async selectByText(select: Locator, candidates: string[]): Promise<{ text: string; value: string } | null> {
     const options = await select
       .evaluate((el) =>
         [...(el as HTMLSelectElement).options].map((o) => ({ value: o.value, text: (o.textContent ?? "").trim() }))
@@ -724,7 +745,7 @@ export class MarktplaatsBrowserTestPublisher {
         const hit = options.find((o) => o.text && test(w, o.text.toLowerCase()));
         if (hit && hit.value) {
           await select.selectOption(hit.value);
-          return hit.text;
+          return hit;
         }
       }
     }
@@ -880,6 +901,7 @@ export class MarktplaatsBrowserTestPublisher {
   // ------------------------------------------------------ structured fields
 
   private async fillStructuredFields(page: Page, draft: AdvertisementDraft): Promise<void> {
+    const l2CategoryId = draft.category?.l2CategoryId ?? null;
     for (const field of draft.fields) {
       const label = field.marktplaatsLabel ?? field.label;
       const candidates = buildAttributeCandidates({
@@ -896,8 +918,35 @@ export class MarktplaatsBrowserTestPublisher {
         marktplaatsKey: field.marktplaatsKey,
         timeoutMs: field.expectsMarktplaatsField ? 2500 : 800,
         options: field.marktplaatsOptions,
+        discoverAttribute: l2CategoryId && !l2CategoryId.includes("UNVERIFIED") ? { internalField: field.key, l2CategoryId } : undefined,
       });
     }
+  }
+
+  /**
+   * Reads the real Marktplaats attribute key off the DOM element that was
+   * just filled (e.g. name="singleSelectAttribute[condition]" or a
+   * data-testid="attribute-autocomplete-merk"), so the feed builder can use
+   * the real key instead of a mock_-prefixed placeholder — without ever
+   * needing official API access to look the key up.
+   */
+  private async discoverAttributeKey(locator: Locator): Promise<string | null> {
+    try {
+      const [name, testid] = await Promise.all([
+        locator.getAttribute("name").catch(() => null),
+        locator.getAttribute("data-testid").catch(() => null),
+      ]);
+      for (const raw of [name, testid]) {
+        if (!raw) continue;
+        const bracket = raw.match(/(?:singleSelectAttribute|numericAttribute|attribute)\[([^\]]+)\]/);
+        if (bracket) return bracket[1];
+        const autocomplete = raw.match(/^attribute-autocomplete-(.+)$/);
+        if (autocomplete) return autocomplete[1];
+      }
+    } catch {
+      /* best-effort discovery only */
+    }
+    return null;
   }
 
   private async fillOne(
@@ -911,6 +960,7 @@ export class MarktplaatsBrowserTestPublisher {
       timeoutMs: number;
       marktplaatsKey?: string | null;
       options?: AdvertisementDraft["fields"][number]["marktplaatsOptions"];
+      discoverAttribute?: { internalField: string; l2CategoryId: string };
     }
   ): Promise<void> {
     const { label, value, expects } = params;
@@ -1003,6 +1053,14 @@ export class MarktplaatsBrowserTestPublisher {
             ? `geselecteerd "${matched}" ← "${value}" (${resolved.candidate.note ?? resolved.candidate.strategy})`
             : `ingevuld (${resolved.candidate.note ?? resolved.candidate.strategy})`
         );
+        if (params.discoverAttribute) {
+          const key = await this.discoverAttributeKey(resolved.locator);
+          if (key) {
+            await setAttributeMapping(params.discoverAttribute.l2CategoryId, params.discoverAttribute.internalField, key).catch(
+              (err) => this.warn(label, `Kon ontdekte attribuutsleutel niet opslaan: ${this.errMsg(err)}`)
+            );
+          }
+        }
       } else {
         this.warn(label, "veld gevonden maar de waarde lijkt niet te zijn toegepast");
         this.unfilled.push(label);
