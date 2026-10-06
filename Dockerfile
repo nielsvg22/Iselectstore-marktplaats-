@@ -34,8 +34,11 @@ COPY . .
 # app user later looks in /home/app/.cache and finds nothing.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Downloads Chromium + the OS packages it needs at runtime.
-RUN npx playwright install --with-deps chromium
+# Downloads Chromium + the OS packages it needs at runtime. Falls back to the
+# npmmirror.com mirror when the primary cdn.playwright.dev CDN geo-blocks the
+# build host (seen as a 403 "not available in your location" on this VPS).
+RUN npx playwright install --with-deps chromium \
+    || PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install --with-deps chromium
 
 RUN npm run build
 
