@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requestStop } from "@/lib/marktplaats/browserTest/status";
+import { isBrowserTestEnabled } from "@/lib/marktplaats/browserTest/config";
+import { hasRemoteBrowserTest, proxyToRemoteBrowserTest } from "@/lib/marktplaats/browserTest/remoteProxy";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,6 +14,10 @@ export const runtime = "nodejs";
  * without redeploying the Coolify app just to reset the in-memory run state.
  */
 export async function POST(req: NextRequest) {
+  if (!isBrowserTestEnabled() && hasRemoteBrowserTest()) {
+    return proxyToRemoteBrowserTest(req, "/api/marktplaats/browser-test/stop");
+  }
+
   const { runId } = await req.json().catch(() => ({}) as { runId?: string });
   if (!runId) {
     return NextResponse.json({ error: "runId is verplicht" }, { status: 400 });

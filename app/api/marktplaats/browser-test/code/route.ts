@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { submitVerificationCode } from "@/lib/marktplaats/browserTest/status";
+import { isBrowserTestEnabled } from "@/lib/marktplaats/browserTest/config";
+import { hasRemoteBrowserTest, proxyToRemoteBrowserTest } from "@/lib/marktplaats/browserTest/remoteProxy";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,6 +15,10 @@ export const runtime = "nodejs";
  * noVNC view to type it.
  */
 export async function POST(req: NextRequest) {
+  if (!isBrowserTestEnabled() && hasRemoteBrowserTest()) {
+    return proxyToRemoteBrowserTest(req, "/api/marktplaats/browser-test/code");
+  }
+
   const { runId, code } = await req.json().catch(() => ({}) as { runId?: string; code?: string });
   if (!runId || !code || !code.trim()) {
     return NextResponse.json({ error: "runId en code zijn verplicht" }, { status: 400 });

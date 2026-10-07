@@ -3,6 +3,7 @@ import { marktplaatsService } from "@/lib/marktplaats/service";
 import { marktplaatsApiPublisher } from "@/lib/marktplaats/apiPublisher";
 import { MarktplaatsBrowserTestPublisher } from "@/lib/marktplaats/browserTest/browserTestPublisher";
 import { getBrowserTestConfig, isBrowserTestEnabled } from "@/lib/marktplaats/browserTest/config";
+import { hasRemoteBrowserTest, proxyToRemoteBrowserTest } from "@/lib/marktplaats/browserTest/remoteProxy";
 import {
   createRun,
   findActiveRun,
@@ -34,6 +35,10 @@ export async function GET(req: NextRequest) {
   const runId = req.nextUrl.searchParams.get("runId");
   const config = getBrowserTestConfig();
 
+  if (!config.enabled && hasRemoteBrowserTest()) {
+    return proxyToRemoteBrowserTest(req, "/api/marktplaats/browser-test");
+  }
+
   if (runId) {
     const run = getRun(runId);
     if (!run) return NextResponse.json({ error: "Onbekende testrun." }, { status: 404 });
@@ -63,6 +68,10 @@ export async function GET(req: NextRequest) {
  * the advertisement is never published while ALLOW_SUBMIT is false.
  */
 export async function POST(req: NextRequest) {
+  if (!isBrowserTestEnabled() && hasRemoteBrowserTest()) {
+    return proxyToRemoteBrowserTest(req, "/api/marktplaats/browser-test");
+  }
+
   const { shopifyProductId } = await req.json().catch(() => ({}) as { shopifyProductId?: string });
   if (!shopifyProductId) {
     return NextResponse.json({ error: "shopifyProductId is verplicht" }, { status: 400 });
