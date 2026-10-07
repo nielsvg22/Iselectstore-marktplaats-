@@ -35,7 +35,13 @@ import {
   cleanupStaleImageDirs,
   downloadImagesForBrowserTest,
 } from "./imageStore";
-import { getActiveContext, setActiveContext } from "./session";
+import {
+  autoLoginCooldownElapsed,
+  autoLoginCooldownRemainingMinutes,
+  getActiveContext,
+  recordAutoLoginAttempt,
+  setActiveContext,
+} from "./session";
 import { upsertCategoryMapping } from "../categoryService";
 import { setAttributeMapping } from "../mappingEngine";
 
@@ -354,8 +360,15 @@ export class MarktplaatsBrowserTestPublisher {
 
       if (!autoLoginAttempted && this.config.username && this.config.password) {
         autoLoginAttempted = true;
-        await this.attemptAutoLogin(page, this.config.username, this.config.password);
-        continue; // re-check isLoggedIn() immediately with the loop's top
+        if (autoLoginCooldownElapsed()) {
+          recordAutoLoginAttempt();
+          await this.attemptAutoLogin(page, this.config.username, this.config.password);
+          continue; // re-check isLoggedIn() immediately with the loop's top
+        }
+        this.info(
+          "Login (auto)",
+          `Overgeslagen — vorige automatische poging was te recent (nog ${autoLoginCooldownRemainingMinutes()} min. afkoelperiode, ter bescherming tegen een Marktplaats-accountblokkade). Log handmatig in.`
+        );
       }
 
       if (Date.now() > deadline) {
