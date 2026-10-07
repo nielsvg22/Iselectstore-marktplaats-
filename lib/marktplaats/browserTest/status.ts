@@ -76,10 +76,17 @@ export function isRunActive(runId: string): boolean {
   );
 }
 
-/** Start an additional run when another one is still going. */
-export function findActiveRun(): BrowserTestRun | undefined {
+/**
+ * Only blocks a second run for the SAME product (two tabs fighting over one
+ * product's form) — different products are free to run concurrently, each
+ * in its own browser tab within the shared, already-logged-in context (see
+ * session.ts / browserTestPublisher.ts's resolvePage()).
+ */
+export function findActiveRunForProduct(shopifyProductId: string): BrowserTestRun | undefined {
   return [...store().runs.values()].find(
-    (r) => r.state === "queued" || r.state === "running" || r.state === "waiting_login" || r.state === "waiting_code"
+    (r) =>
+      r.shopifyProductId === shopifyProductId &&
+      (r.state === "queued" || r.state === "running" || r.state === "waiting_login" || r.state === "waiting_code")
   );
 }
 

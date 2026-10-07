@@ -255,7 +255,7 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
           <button
             onClick={stopBrowserTest}
             disabled={loading !== null && loading !== "stopbrowsertest"}
-            title="Stopt de lopende browsertest en sluit de browser direct — geen herdeploy nodig."
+            title="Stopt deze testrun en sluit zijn tabblad — geen herdeploy nodig. Andere lopende tests (andere producten) blijven gewoon draaien."
             style={{ ...btnStyle(), borderColor: "#dc2626", color: "#dc2626" }}
           >
             {loading === "stopbrowsertest" ? "Bezig…" : "Stop test"}

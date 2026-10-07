@@ -199,13 +199,11 @@ export class MarktplaatsBrowserTestPublisher {
       await this.stopBeforeSubmitStep(page);
     } catch (err) {
       if (err instanceof StoppedByUserError) {
-        recordStatus(this.run, { field: "Gestopt", status: "info", detail: "Test gestopt — browser is gesloten." });
+        recordStatus(this.run, { field: "Gestopt", status: "info", detail: "Test gestopt — tabblad is gesloten." });
         setState(this.run, "failed", "Gestopt door gebruiker");
-        const ctx = getActiveContext();
-        if (ctx) {
-          await ctx.close().catch(() => {});
-          setActiveContext(null);
-        }
+        // Close only this run's own tab — the shared context (and any other
+        // run's tab) stays open; other products may still be mid-run in it.
+        await page.close().catch(() => {});
         return;
       }
       throw err;
@@ -214,7 +212,6 @@ export class MarktplaatsBrowserTestPublisher {
       // manual inspection. A user-requested stop closes it explicitly above.
       await cleanupImageDir(this.imageDir);
       this.imageDir = null;
-      await page.bringToFront().catch(() => {});
     }
   }
 
@@ -260,9 +257,14 @@ export class MarktplaatsBrowserTestPublisher {
     return context;
   }
 
+  /**
+   * Always a fresh tab, never context.pages()[0] — multiple runs (different
+   * products) can be active at once, all sharing the same logged-in context
+   * (cookies/session), each working its own tab so they never fight over the
+   * same page's URL/form state.
+   */
   private async resolvePage(context: BrowserContext): Promise<Page> {
-    const pages = context.pages();
-    const page = pages[0] ?? (await context.newPage());
+    const page = await context.newPage();
     page.setDefaultTimeout(this.config.navigationTimeoutMs);
     page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
     return page;

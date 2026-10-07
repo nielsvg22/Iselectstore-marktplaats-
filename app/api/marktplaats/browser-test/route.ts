@@ -6,7 +6,7 @@ import { getBrowserTestConfig, isBrowserTestEnabled } from "@/lib/marktplaats/br
 import { hasRemoteBrowserTest, proxyToRemoteBrowserTest } from "@/lib/marktplaats/browserTest/remoteProxy";
 import {
   createRun,
-  findActiveRun,
+  findActiveRunForProduct,
   getRun,
   isRunActive,
   recordStatus,
@@ -87,10 +87,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const active = findActiveRun();
+  const active = findActiveRunForProduct(shopifyProductId);
   if (active) {
     return NextResponse.json(
-      { error: "Er draait al een Marktplaats-browsertest. Wacht tot deze klaar is.", runId: active.runId },
+      { error: "Er draait al een Marktplaats-browsertest voor dit product. Wacht tot deze klaar is.", runId: active.runId },
       { status: 409 }
     );
   }
