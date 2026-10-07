@@ -131,7 +131,7 @@ export async function buildFeedXml(): Promise<FeedBuildResult> {
     const attributesXml = await buildAttributesXml(l2, preview.data, preview.template.marktplaatsAttributes);
 
     const ad = `  <admarkt:ad>
-    <admarkt:externalId>${xmlEscape(id)}</admarkt:externalId>
+    <admarkt:vendorId>${xmlEscape(id)}</admarkt:vendorId>
     <admarkt:categoryId>${xmlEscape(l2)}</admarkt:categoryId>
     <admarkt:title>${xmlEscape(title)}</admarkt:title>
     <admarkt:description>${xmlEscape(description)}</admarkt:description>
