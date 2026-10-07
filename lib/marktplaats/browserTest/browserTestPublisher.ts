@@ -351,18 +351,45 @@ export class MarktplaatsBrowserTestPublisher {
   /**
    * Marktplaats shows a cookie banner on first load of a fresh profile —
    * accept it ourselves so it never blocks the login/2FA flow underneath.
-   * Best-effort and only ever attempted once per run.
+   * Only actually "handled" once a click succeeds, so it keeps retrying on
+   * every call (openPlacementPage, every ensureLoggedIn() loop iteration,
+   * attemptAutoLogin()) until the banner is gone — covers a banner that
+   * renders a beat later than the rest of the page.
+   *
+   * Tries several known consent-platform shapes, not just Marktplaats' own
+   * exact "Accepteren" button text, since a fresh profile occasionally shows
+   * a differently-worded or iframe-based (Cookiebot-style) variant:
+   *  - direct DOM button, common Dutch accept-all wording
+   *  - known CMP element ids (OneTrust) injected straight into the page
+   *  - a Cookiebot-style consent iframe
    */
   private async autoAcceptCookies(page: Page): Promise<void> {
     if (this.cookiesHandled) return;
     try {
-      const accept = page.getByRole("button", { name: /^accepteren$/i }).first();
-      const visible = await accept.isVisible({ timeout: 1500 }).catch(() => false);
-      if (!visible) return;
-      await accept.click({ timeout: 3000 });
-      this.cookiesHandled = true;
-      this.info("Cookies", "Cookiemelding automatisch geaccepteerd");
-      await page.waitForTimeout(300).catch(() => {});
+      const directCandidates = [
+        page.getByRole("button", { name: /^(accepteren|alles accepteren|accepteer alles|akkoord|ik ga akkoord)$/i }).first(),
+        page.locator("#onetrust-accept-btn-handler"),
+      ];
+      for (const candidate of directCandidates) {
+        const visible = await candidate.isVisible({ timeout: 1500 }).catch(() => false);
+        if (!visible) continue;
+        await candidate.click({ timeout: 3000 });
+        this.cookiesHandled = true;
+        this.info("Cookies", "Cookiemelding automatisch geaccepteerd");
+        await page.waitForTimeout(300).catch(() => {});
+        return;
+      }
+
+      // Cookiebot-style banners render inside their own iframe.
+      const consentFrame = page.frameLocator('iframe[id*="cookiebot" i], iframe[title*="cookie" i]').first();
+      const frameAccept = consentFrame.getByRole("button", { name: /^(accepteren|alles accepteren|akkoord)$/i }).first();
+      const frameVisible = await frameAccept.isVisible({ timeout: 1500 }).catch(() => false);
+      if (frameVisible) {
+        await frameAccept.click({ timeout: 3000 });
+        this.cookiesHandled = true;
+        this.info("Cookies", "Cookiemelding automatisch geaccepteerd (iframe)");
+        await page.waitForTimeout(300).catch(() => {});
+      }
     } catch {
       /* no cookie banner visible right now — nothing to do */
     }
