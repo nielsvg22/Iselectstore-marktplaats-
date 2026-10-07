@@ -30,15 +30,12 @@ export async function GET(req: NextRequest) {
     if (req.nextUrl.searchParams.get("debug") === "1") {
       return NextResponse.json({ included, skipped });
     }
-    // Per Marktplaats' feed docs: serve as text/xml, not as a download.
-    // The XML prolog and this header both declare ISO-8859-1 — Node's default
-    // string->bytes encoding is UTF-8, so without this the declared charset
-    // and the actual bytes would silently diverge the moment a title or
-    // description contains a Dutch diacritic (ë, ï, ö, …), producing bytes
-    // Marktplaats' parser can't decode. feedBuilder.sanitizeText() already
-    // strips anything outside Latin-1, so this conversion is always safe.
-    const body = Buffer.from(xml, "latin1");
-    return new NextResponse(body, { headers: { "Content-Type": "text/xml; charset=ISO-8859-1" } });
+    // Per https://ecg-icas.github.io/icas/doc/prod/feeds.html#file-format
+    // ("Feeds are expected to be in UTF-8 encoding"): serve as text/xml with
+    // charset=UTF-8, matching the XML prolog. Node's default string->bytes
+    // encoding for a plain string response is already UTF-8, so no manual
+    // Buffer conversion is needed here (unlike the ISO-8859-1 this replaces).
+    return new NextResponse(xml, { headers: { "Content-Type": "text/xml; charset=UTF-8" } });
   } catch (err) {
     const message = humanizeError(err instanceof Error ? err.message : String(err));
     await logSync({ action: "feed_error", message });

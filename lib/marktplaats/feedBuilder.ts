@@ -37,13 +37,16 @@ function xmlEscape(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-/** Marktplaats feed only accepts latin-1 — strip anything outside it (and any URL, which it drops anyway). */
+/**
+ * Strips URLs (Marktplaats drops them anyway) and collapses whitespace.
+ * The file itself is UTF-8 (per https://ecg-icas.github.io/icas/doc/prod/feeds.html#file-format
+ * — "Feeds are expected to be in UTF-8 encoding"), so Dutch diacritics etc. are
+ * fine here; only free-text field *values* like campaignVendorId are
+ * documented as latin-1-restricted, which doesn't apply to title/description.
+ */
 function sanitizeText(value: string): string {
   return value
     .replace(/https?:\/\/\S+/gi, "")
-    .split("")
-    .filter((ch) => ch.charCodeAt(0) <= 255)
-    .join("")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -143,7 +146,7 @@ ${url ? `    <admarkt:url>${xmlEscape(url)}</admarkt:url>\n` : ""}${attributesXm
     ads.push(ad);
   }
 
-  const xml = `<?xml version="1.0" encoding="ISO-8859-1"?>\n<admarkt:ads xmlns:admarkt="${NS}">\n${ads.join("\n")}\n</admarkt:ads>\n`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<admarkt:ads xmlns:admarkt="${NS}">\n${ads.join("\n")}\n</admarkt:ads>\n`;
 
   return { xml, included: ads.length, skipped };
 }
