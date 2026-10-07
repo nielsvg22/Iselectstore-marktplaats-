@@ -240,21 +240,52 @@ export class MarktplaatsBrowserTestPublisher {
     try {
       context = await launch(this.config.profileDir);
     } catch (err) {
-      // Profile likely locked by a previous dev-server process — fall back to
-      // a throw-away profile (the user simply has to log in once more).
-      const fallback = path.join(this.config.profileDir, `tmp-${process.pid}-${Date.now()}`);
-      this.warn(
-        "Browserprofiel",
-        `Kon het vaste profiel niet openen (${this.errMsg(err)}) — tijdelijk profiel gebruikt.`
-      );
-      ensureDir(fallback);
-      context = await launch(fallback);
+      const message = this.errMsg(err);
+      // Chromium's own process_singleton guard refuses to open a userDataDir
+      // it believes is still in use — but a Coolify redeploy (or any hard
+      // container kill) swaps the whole container without Chromium ever
+      // getting to clean up its own SingletonLock/-Cookie/-Socket files, so
+      // the NEXT launch sees a lock from a process that no longer exists
+      // anywhere. Clearing exactly those well-known files and retrying on
+      // the SAME profile keeps the real (logged-in) session instead of
+      // silently falling back to an empty throwaway profile.
+      const staleLock = /SingletonLock|process_singleton|locked the profile/i.test(message);
+      if (staleLock) {
+        try {
+          for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+            fs.rmSync(path.join(this.config.profileDir, name), { force: true });
+          }
+          context = await launch(this.config.profileDir);
+          this.warn(
+            "Browserprofiel",
+            `Verouderd lockbestand van een vorige (gestopte) container opgeruimd — bestaand profiel alsnog gebruikt.`
+          );
+        } catch (retryErr) {
+          context = await this.launchThrowawayProfile(launch, retryErr);
+        }
+      } else {
+        context = await this.launchThrowawayProfile(launch, err);
+      }
     }
 
     context.on("close", () => setActiveContext(null));
     setActiveContext(context);
     this.ok("Browser", `Playwright gestart (${this.config.headless ? "headless" : "headed"})`);
     return context;
+  }
+
+  /** Last resort: a throwaway profile means the user has to log in once more. */
+  private async launchThrowawayProfile(
+    launch: (userDataDir: string) => Promise<BrowserContext>,
+    err: unknown
+  ): Promise<BrowserContext> {
+    const fallback = path.join(this.config.profileDir, `tmp-${process.pid}-${Date.now()}`);
+    this.warn(
+      "Browserprofiel",
+      `Kon het vaste profiel niet openen (${this.errMsg(err)}) — tijdelijk profiel gebruikt.`
+    );
+    ensureDir(fallback);
+    return launch(fallback);
   }
 
   /**
