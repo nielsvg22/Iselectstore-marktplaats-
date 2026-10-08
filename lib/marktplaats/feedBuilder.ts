@@ -11,15 +11,35 @@ import { getAttributeMapping } from "./mappingEngine";
  * "admarkt:" prefix (every example in Marktplaats' own docs uses it, so we
  * match it exactly rather than relying on default-namespace equivalence).
  *
- * Category IDs and attribute keys are real (not the mock_-prefixed
- * placeholders used elsewhere) only once a browser-test run has actually
- * selected that category/field on the live site — see
- * browserTest/browserTestPublisher.ts's category/attribute "discovery"
- * persistence. A product whose category hasn't been discovered yet is
- * skipped rather than sent with a fake categoryId.
+ * IMPORTANT: categoryId here is NOT the same ID space as
+ * marktplaats_category_mapping (browserTest/browserTestPublisher.ts's
+ * category "discovery"). That table's IDs come from the <select> options on
+ * the live CONSUMER posting form (marktplaats.nl/plaats) and are only valid
+ * for driving that form — confirmed by live testing that l2CategoryId "225"
+ * from that table (meant for iPhone) is actually "Boeken > Fantasy" in the
+ * Admarkt feed's own taxonomy. The Admarkt taxonomy is fetched fresh from
+ * the public, unauthenticated GET https://admarkt.marktplaats.nl/api/sellside/
+ * category/0?levels=9999 (Accept: application/sellside.category-v5+json) —
+ * ADMARKT_CATEGORY_MAP below is a one-time lookup against that real tree,
+ * independent of whatever the browser-test discovery table contains.
  */
 
 const NS = "http://admarkt.marktplaats.nl/schemas/1.0";
+
+/**
+ * Admarkt leaf category IDs per Shopify product type — looked up against the
+ * live Admarkt category taxonomy (see the IMPORTANT note above), NOT against
+ * marktplaats_category_mapping. Re-verify here if a new product type is
+ * added or Marktplaats restructures a category.
+ */
+const ADMARKT_CATEGORY_MAP: Record<string, string> = {
+  iPhone: "1953", // Telecommunicatie > Mobiele telefoons | Apple iPhone
+  iPad: "2722", // Computers en Software > Apple iPads
+  MacBook: "325", // Computers en Software > Apple Macbooks
+  iMac: "324", // Computers en Software > Apple Desktops
+  "Mac mini": "324", // Computers en Software > Apple Desktops
+  "Apple Watch": "3041", // Sieraden, Tassen en Uiterlijk > Smartwatches
+};
 
 const CONDITION_MAP: Record<string, "new" | "refurbished" | "used"> = {
   "Als nieuw": "refurbished",
@@ -27,6 +47,33 @@ const CONDITION_MAP: Record<string, "new" | "refurbished" | "used"> = {
   "Nette staat": "used",
   "Zichtbare gebruikssporen": "used",
 };
+
+/**
+ * The attribute-level "condition" key (separate from the top-level
+ * <admarkt:condition> element above) has its own enum, verified against
+ * category 1953's live attributeGroups: ["Nieuw", "Refurbished",
+ * "Zo goed als nieuw", "Gebruikt", "Niet werkend"] — our own 4-tier Dutch
+ * condition vocabulary (lib/templates/types.ts) doesn't match any of those
+ * strings verbatim, so send only "Zo goed als nieuw" (still like new) or
+ * "Gebruikt" (used, same object offered on either side of that split).
+ */
+const CONDITION_ATTRIBUTE_MAP: Record<string, string> = {
+  "Als nieuw": "Zo goed als nieuw",
+  "Zeer nette staat": "Zo goed als nieuw",
+  "Nette staat": "Gebruikt",
+  "Zichtbare gebruikssporen": "Gebruikt",
+};
+
+/**
+ * The "storage" attribute's value enum is unit-suffixed ("256 GB", "1 TB" —
+ * verified against category 1953's live attributeGroups), but
+ * FIELD_LIBRARY.storage_gb (lib/templates/types.ts) stores a bare number.
+ */
+function formatStorageValue(rawGb: string): string {
+  const gb = Number(rawGb);
+  if (!Number.isFinite(gb) || gb <= 0) return rawGb;
+  return gb >= 1024 && gb % 1024 === 0 ? `${gb / 1024} TB` : `${gb} GB`;
+}
 
 function xmlEscape(value: string): string {
   return value
@@ -64,7 +111,17 @@ function sanitizeText(value: string): string {
 async function buildAttributesXml(l2CategoryId: string, data: Record<string, string>, attributeFields: string[]): Promise<string> {
   const fieldMapping = await getAttributeMapping(l2CategoryId);
   const entries = attributeFields
-    .map((field) => ({ field, key: fieldMapping[field], value: data[field] }))
+    .map((field) => {
+      const key = fieldMapping[field];
+      let value = data[field];
+      // Discovered key NAMES (e.g. "storage", "condition") are correct —
+      // only the Admarkt categoryId numbering differs from the browser-test
+      // discovery table's — but their VALUE formats still need converting to
+      // match Admarkt's own enum (verified live against category 1953).
+      if (key === "storage" && value) value = formatStorageValue(value);
+      if (key === "condition" && value) value = CONDITION_ATTRIBUTE_MAP[value] ?? value;
+      return { field, key, value };
+    })
     .filter((e) => e.key && e.value && e.value.trim().length > 0);
   if (entries.length === 0) return "";
   const items = entries
@@ -121,9 +178,18 @@ export async function buildFeedXml(): Promise<FeedBuildResult> {
       continue;
     }
 
+    const admarktCategoryId = ADMARKT_CATEGORY_MAP[preview.productType];
+    if (!admarktCategoryId) {
+      skipped.push({ shopifyProductId: id, reason: `geen Admarkt-categorie-ID bekend voor producttype "${preview.productType}"` });
+      continue;
+    }
+
+    // Still used as the lookup key into marktplaats_attribute_mapping — that
+    // table's discovered attribute KEY NAMES (e.g. "storage") are correct
+    // even though its categoryId numbering isn't (see the module doc above).
     const l2 = preview.categoryMapping?.l2CategoryId;
     if (!l2 || l2 === "UNVERIFIED" || Number.isNaN(Number(l2))) {
-      skipped.push({ shopifyProductId: id, reason: "categorie-ID nog niet ontdekt — draai eerst een browsertest voor dit producttype" });
+      skipped.push({ shopifyProductId: id, reason: "attribuutsleutels nog niet ontdekt — draai eerst een browsertest voor dit producttype" });
       continue;
     }
 
@@ -135,7 +201,7 @@ export async function buildFeedXml(): Promise<FeedBuildResult> {
 
     const ad = `  <admarkt:ad>
     <admarkt:vendorId>${xmlEscape(id)}</admarkt:vendorId>
-    <admarkt:categoryId>${xmlEscape(l2)}</admarkt:categoryId>
+    <admarkt:categoryId>${xmlEscape(admarktCategoryId)}</admarkt:categoryId>
     <admarkt:title>${xmlEscape(title)}</admarkt:title>
     <admarkt:description>${xmlEscape(description)}</admarkt:description>
     <admarkt:price>${Math.round(preview.price)}</admarkt:price>
