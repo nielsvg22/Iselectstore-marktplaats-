@@ -75,6 +75,26 @@ function formatStorageValue(rawGb: string): string {
   return gb >= 1024 && gb % 1024 === 0 ? `${gb / 1024} TB` : `${gb} GB`;
 }
 
+/**
+ * Real import run (ID 2899161) warned "Cannot match locale for attribute
+ * with name X, skipping attribute" for every single attribute — the XSD
+ * says attributeLabel/attributeLocale are optional and get auto-matched
+ * from attributeName+attributeValue otherwise, but that auto-match failed
+ * in practice, so send them explicitly. Labels are category 1953's own
+ * (nl_NL) labels from its live attributeGroups — the same shared attribute
+ * dictionary other categories draw their "storage"/"condition"/etc. keys
+ * from, so these should carry over correctly.
+ */
+const ATTRIBUTE_LABEL_MAP: Record<string, string> = {
+  condition: "Conditie",
+  storage: "Opslagcapaciteit",
+  subscription: "Abonnement",
+  simlock: "Simlock",
+  color: "Kleur",
+  "battery health": "Batterijconditie",
+};
+const ATTRIBUTE_LOCALE = "nl_NL";
+
 function xmlEscape(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -125,12 +145,13 @@ async function buildAttributesXml(l2CategoryId: string, data: Record<string, str
     .filter((e) => e.key && e.value && e.value.trim().length > 0);
   if (entries.length === 0) return "";
   const items = entries
-    .map(
-      (e) =>
-        `      <admarkt:attribute>\n        <admarkt:attributeName>${xmlEscape(
-          e.key
-        )}</admarkt:attributeName>\n        <admarkt:attributeValue>${xmlEscape(e.value)}</admarkt:attributeValue>\n      </admarkt:attribute>`
-    )
+    .map((e) => {
+      const label = ATTRIBUTE_LABEL_MAP[e.key];
+      const labelXml = label
+        ? `\n        <admarkt:attributeLabel>${xmlEscape(label)}</admarkt:attributeLabel>\n        <admarkt:attributeLocale>${ATTRIBUTE_LOCALE}</admarkt:attributeLocale>`
+        : "";
+      return `      <admarkt:attribute>\n        <admarkt:attributeName>${xmlEscape(e.key)}</admarkt:attributeName>${labelXml}\n        <admarkt:attributeValue>${xmlEscape(e.value)}</admarkt:attributeValue>\n      </admarkt:attribute>`;
+    })
     .join("\n");
   return `    <admarkt:attributes>\n${items}\n    </admarkt:attributes>\n`;
 }
