@@ -428,56 +428,90 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
       </h3>
 
       {run.state === "waiting_login" && (
-        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e", marginBottom: 8 }}>
-            Niet ingelogd — typ hieronder je Marktplaats-inloggegevens in (of log zelf in via de live browser):
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input
-              type="email"
-              autoComplete="username"
-              autoFocus
-              value={loginUsername}
-              onChange={(e) => {
-                setLoginUsername(e.target.value);
-                setLoginStatus("idle");
-              }}
-              placeholder="e-mailadres"
-              style={{ flex: "1 1 180px", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 15 }}
-            />
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={loginPassword}
-              onChange={(e) => {
-                setLoginPassword(e.target.value);
-                setLoginStatus("idle");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submitLogin();
-              }}
-              placeholder="wachtwoord"
-              style={{ flex: "1 1 160px", padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 15 }}
-            />
-            <button
-              onClick={submitLogin}
-              disabled={loginStatus === "sending" || !loginUsername.trim() || !loginPassword}
-              style={btnStyle(true)}
-            >
-              {loginStatus === "sending" ? "Bezig…" : "Inloggen"}
-            </button>
-          </div>
-          {loginStatus === "sent" && <div style={{ marginTop: 6, fontSize: 13, color: "#16a34a" }}>Inloggegevens verstuurd naar de browser.</div>}
-          {loginStatus === "error" && <div style={{ marginTop: 6, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
+        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400e" }}>
+          Niet ingelogd — zie de pop-up om in te loggen.
         </div>
       )}
 
       {run.state === "waiting_code" && (
-        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#92400e", marginBottom: 8 }}>
-            Marktplaats vraagt een verificatiecode (SMS/e-mail) — typ hem hieronder in:
+        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400e" }}>
+          Marktplaats vraagt een verificatiecode — zie de pop-up om 'm in te vullen.
+        </div>
+      )}
+
+      {run.state === "waiting_login" && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(17, 17, 17, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 1000,
+          }}
+        >
+          <div style={{ background: "#fff", borderRadius: 14, padding: 20, width: "100%", maxWidth: 420, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1f3049", marginBottom: 4 }}>Inloggen op Marktplaats</div>
+            <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 14 }}>Niet ingelogd — typ je Marktplaats-inloggegevens in.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input
+                type="email"
+                autoComplete="username"
+                autoFocus
+                value={loginUsername}
+                onChange={(e) => {
+                  setLoginUsername(e.target.value);
+                  setLoginStatus("idle");
+                }}
+                placeholder="e-mailadres"
+                style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 }}
+              />
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={loginPassword}
+                onChange={(e) => {
+                  setLoginPassword(e.target.value);
+                  setLoginStatus("idle");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitLogin();
+                }}
+                placeholder="wachtwoord"
+                style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 }}
+              />
+              <button
+                onClick={submitLogin}
+                disabled={loginStatus === "sending" || !loginUsername.trim() || !loginPassword}
+                style={{ ...btnStyle(true), padding: "12px 14px", fontSize: 16 }}
+              >
+                {loginStatus === "sending" ? "Bezig…" : "Inloggen"}
+              </button>
+            </div>
+            {loginStatus === "sent" && <div style={{ marginTop: 10, fontSize: 13, color: "#16a34a" }}>Inloggegevens verstuurd naar de browser.</div>}
+            {loginStatus === "error" && <div style={{ marginTop: 10, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+        </div>
+      )}
+
+      {run.state === "waiting_code" && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(17, 17, 17, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 1000,
+          }}
+        >
+          <div style={{ background: "#fff", borderRadius: 14, padding: 20, width: "100%", maxWidth: 360, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1f3049", marginBottom: 4 }}>Verificatiecode</div>
+            <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 14 }}>Marktplaats vraagt een sms/e-mailcode — vul 'm hieronder in.</div>
             <input
               inputMode="numeric"
               autoFocus
@@ -490,14 +524,18 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
                 if (e.key === "Enter") submitCode();
               }}
               placeholder="123456"
-              style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 }}
+              style={{ width: "100%", padding: "14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 24, letterSpacing: 4, textAlign: "center", boxSizing: "border-box" }}
             />
-            <button onClick={submitCode} disabled={codeStatus === "sending" || !code.trim()} style={btnStyle(true)}>
+            <button
+              onClick={submitCode}
+              disabled={codeStatus === "sending" || !code.trim()}
+              style={{ ...btnStyle(true), width: "100%", marginTop: 10, padding: "12px 14px", fontSize: 16 }}
+            >
               {codeStatus === "sending" ? "Bezig…" : "Versturen"}
             </button>
+            {codeStatus === "sent" && <div style={{ marginTop: 10, fontSize: 13, color: "#16a34a" }}>Code verstuurd naar de browser.</div>}
+            {codeStatus === "error" && <div style={{ marginTop: 10, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
           </div>
-          {codeStatus === "sent" && <div style={{ marginTop: 6, fontSize: 13, color: "#16a34a" }}>Code verstuurd naar de browser.</div>}
-          {codeStatus === "error" && <div style={{ marginTop: 6, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
         </div>
       )}
 
