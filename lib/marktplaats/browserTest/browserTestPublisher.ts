@@ -551,6 +551,16 @@ export class MarktplaatsBrowserTestPublisher {
       await passwordField.waitFor({ state: "visible", timeout: 5000 });
       await passwordField.fill(password);
 
+      // "Ingelogd blijven" (stay logged in) is checked by default on
+      // Marktplaats' own form, but make sure: an unchecked one here would
+      // give a short-lived session instead of the long-lived one the
+      // persistent profile is built around, causing 2FA to resurface on
+      // the very next run even though nothing actually went wrong.
+      const stayLoggedIn = page.getByLabel(/ingelogd blijven/i).first();
+      if ((await stayLoggedIn.count().catch(() => 0)) > 0 && !(await stayLoggedIn.isChecked().catch(() => true))) {
+        await stayLoggedIn.check().catch(() => {});
+      }
+
       const submit = page
         .getByRole("button", { name: /inloggen|log\s*in|aanmelden/i })
         .first();
