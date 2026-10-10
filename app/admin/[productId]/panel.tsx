@@ -435,7 +435,7 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
 
       {run.state === "waiting_code" && (
         <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400e" }}>
-          Marktplaats vraagt een verificatiecode — zie de pop-up om 'm in te vullen.
+          Marktplaats vraagt een verificatiecode — zie de pop-up om &apos;m in te vullen.
         </div>
       )}
 
@@ -511,7 +511,7 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
         >
           <div style={{ background: "#fff", borderRadius: 14, padding: 20, width: "100%", maxWidth: 360, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: "#1f3049", marginBottom: 4 }}>Verificatiecode</div>
-            <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 14 }}>Marktplaats vraagt een sms/e-mailcode — vul 'm hieronder in.</div>
+            <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 14 }}>Marktplaats vraagt een sms/e-mailcode — vul &apos;m hieronder in.</div>
             <input
               inputMode="numeric"
               autoFocus
