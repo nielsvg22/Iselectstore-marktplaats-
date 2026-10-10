@@ -370,7 +370,13 @@ function formatPrice(cents: number | undefined): string {
 function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserTestRun; novncUrl: string | null; novncPassword: string | null }) {
   const isActive = run.state === "queued" || run.state === "running" || run.state === "waiting_login" || run.state === "waiting_code";
   const accent = run.state === "failed" ? "#dc2626" : isActive ? "#b45309" : "#16a34a";
-  const showViewer = isActive && Boolean(novncUrl);
+  // Hidden during waiting_login/waiting_code: noVNC grabs keyboard focus for
+  // the remote session as soon as its iframe connects, which — especially on
+  // mobile, where focus/touch handling is already fragile — can swallow
+  // keystrokes meant for our OWN login/code fields right above it. Those
+  // fields exist precisely so nobody has to touch the VM for this, so the
+  // VM view adds nothing here and only risks stealing input from them.
+  const showViewer = (run.state === "queued" || run.state === "running") && Boolean(novncUrl);
   const [code, setCode] = useState("");
   const [codeStatus, setCodeStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [loginUsername, setLoginUsername] = useState("");
@@ -497,9 +503,7 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
 
       {showViewer && (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 6 }}>
-            {run.state === "waiting_login" ? "Live browser — log hieronder handmatig in als dat nodig is:" : "Live browser:"}
-          </div>
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 6 }}>Live browser:</div>
           <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 10", borderRadius: 10, overflow: "hidden", border: "1px solid #e7e9ec", background: "#111" }}>
             <iframe
               src={`${novncUrl}/vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true${
