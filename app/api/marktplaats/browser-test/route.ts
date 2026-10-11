@@ -53,10 +53,21 @@ export async function GET(req: NextRequest) {
     profileDir: config.profileDir,
     // Only present when deployed with a separate noVNC service (e.g.
     // Coolify) — lets the admin UI embed the live browser view directly.
-    // Sent to whoever can already load this admin page; there is no extra
-    // auth boundary here beyond that today (see MARKTPLAATS_INTEGRATION.md).
+    // SECURITY (part 4 of the assignment): the noVNC PASSWORD used to be
+    // sent here too and pasted straight into the iframe's `src` as a
+    // `?password=...` query param — visible in browser history, any
+    // server/proxy access log, and the `Referer` header of every request the
+    // iframe's own page makes. It is intentionally no longer included in
+    // this response. The iframe now loads noVNC WITHOUT a password in the
+    // URL; noVNC's own password prompt (inside the embedded VM view, over
+    // the WebSocket connection — never an HTTP query string) is the
+    // authorized way to connect. See panel.tsx's "Browser handmatig
+    // bedienen" control and MARKTPLAATS_INTEGRATION.md for the remaining
+    // open item (no proxy yet translates a short-lived token into this
+    // password, so the real VNC_PASSWORD must still be typed by hand once
+    // per noVNC session — see the report for why that proxy is out of scope
+    // here).
     novncUrl: config.novncUrl,
-    novncPassword: config.novncPassword,
   });
 }
 
@@ -130,7 +141,14 @@ export async function POST(req: NextRequest) {
       setState(run, "failed", message);
       await safeLog("browser_test_error", shopifyProductId, message);
     } finally {
-      if (run.state === "queued" || run.state === "running" || run.state === "waiting_login" || run.state === "waiting_code") {
+      if (
+        run.state === "queued" ||
+        run.state === "running" ||
+        run.state === "waiting_login" ||
+        run.state === "waiting_code" ||
+        run.state === "verifying_code" ||
+        run.state === "authenticated"
+      ) {
         setState(run, "done", run.message ?? "Klaar");
       }
     }
