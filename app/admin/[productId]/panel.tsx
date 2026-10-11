@@ -19,10 +19,15 @@ interface BrowserFieldStatus {
   detail?: string;
 }
 
+interface StepTiming {
+  step: string;
+  ms: number;
+}
+
 interface BrowserTestRun {
   runId: string;
   shopifyProductId: string;
-  state: "queued" | "waiting_login" | "waiting_code" | "running" | "done" | "failed";
+  state: "queued" | "waiting_login" | "waiting_code" | "verifying_code" | "authenticated" | "running" | "done" | "failed";
   startedAt: string;
   finishedAt?: string;
   title?: string;
@@ -30,6 +35,8 @@ interface BrowserTestRun {
   stoppedBeforeSubmit: boolean;
   postedUrl?: string;
   statuses: BrowserFieldStatus[];
+  timings?: StepTiming[];
+  codeAttempts?: number;
 }
 
 interface BrowserTestConfig {
@@ -38,8 +45,10 @@ interface BrowserTestConfig {
   apiConfigured: boolean;
   placementUrl: string;
   profileDir: string;
+  // novncPassword is deliberately absent: the server never sends the noVNC
+  // password to the browser (see app/api/marktplaats/browser-test/route.ts
+  // — part 4 of the assignment, the old query-string leak).
   novncUrl: string | null;
-  novncPassword: string | null;
 }
 
 interface AttributeMappingResult {
@@ -81,13 +90,20 @@ const browserStatusIcon: Record<BrowserFieldStatusKind, string> = {
   info: "ℹ",
 };
 
+// Part 6 of the assignment: duidelijke, losse statussen in plaats van de
+// ruwe state-machine-waarden. "Code verstuurd" mag nooit als succesvolle
+// login getoond worden — er is geen state-waarde die dat zegt, "authenticated"
+// (pas bereikt na bevestiging door Marktplaats zelf) is de enige die
+// "Succesvol ingelogd" mag tonen.
 const browserStateLabel: Record<BrowserTestRun["state"], string> = {
-  queued: "wordt gestart…",
-  waiting_login: "wacht op handmatige login",
-  waiting_code: "wacht op verificatiecode",
-  running: "bezig met invullen…",
-  done: "klaar",
-  failed: "mislukt",
+  queued: "Browser verbinden",
+  waiting_login: "Wachten op login",
+  waiting_code: "Wachten op verificatiecode",
+  verifying_code: "Code controleren…",
+  authenticated: "Succesvol ingelogd",
+  running: "Advertentie voorbereiden",
+  done: "Klaar",
+  failed: "Mislukt",
 };
 
 export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyProductId: string; productType: string }) {
@@ -205,7 +221,9 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
       (browserRun.state === "queued" ||
         browserRun.state === "running" ||
         browserRun.state === "waiting_login" ||
-        browserRun.state === "waiting_code")
+        browserRun.state === "waiting_code" ||
+        browserRun.state === "verifying_code" ||
+        browserRun.state === "authenticated")
   );
 
   async function stopBrowserTest() {
@@ -284,7 +302,7 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
 
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: 12, color: "#991b1b" }}>{error}</div>}
 
-      {browserRun && <BrowserTestStatusCard run={browserRun} novncUrl={browserConfig?.novncUrl ?? null} novncPassword={browserConfig?.novncPassword ?? null} />}
+      {browserRun && <BrowserTestStatusCard run={browserRun} novncUrl={browserConfig?.novncUrl ?? null} />}
 
       {preview && showAdPreview && <MarktplaatsAdPreview preview={preview} />}
 
@@ -367,16 +385,31 @@ function formatPrice(cents: number | undefined): string {
  * Live debug view of the local Playwright test: which field was filled, which
  * selector matched and which field Marktplaats did not offer.
  */
-function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserTestRun; novncUrl: string | null; novncPassword: string | null }) {
-  const isActive = run.state === "queued" || run.state === "running" || run.state === "waiting_login" || run.state === "waiting_code";
+function BrowserTestStatusCard({ run, novncUrl }: { run: BrowserTestRun; novncUrl: string | null }) {
+  const isActive =
+    run.state === "queued" ||
+    run.state === "running" ||
+    run.state === "waiting_login" ||
+    run.state === "waiting_code" ||
+    run.state === "verifying_code" ||
+    run.state === "authenticated";
   const accent = run.state === "failed" ? "#dc2626" : isActive ? "#b45309" : "#16a34a";
-  // Hidden during waiting_login/waiting_code: noVNC grabs keyboard focus for
-  // the remote session as soon as its iframe connects, which — especially on
-  // mobile, where focus/touch handling is already fragile — can swallow
-  // keystrokes meant for our OWN login/code fields right above it. Those
-  // fields exist precisely so nobody has to touch the VM for this, so the
-  // VM view adds nothing here and only risks stealing input from them.
-  const showViewer = (run.state === "queued" || run.state === "running") && Boolean(novncUrl);
+  // Part 3 of the assignment: the live view now stays visible during EVERY
+  // phase (connecting, inloggen, MFA, formulier invullen, uploaden,
+  // publiceren, foutafhandeling) — it is never hidden any more. The original
+  // problem this used to "solve" by hiding the iframe (noVNC grabbing
+  // keyboard focus away from our own login/code inputs, especially on
+  // mobile) is instead solved below with `manualControl`: by default the
+  // iframe is rendered `pointer-events: none` (and non-focusable) during
+  // waiting_login/waiting_code so it cannot steal clicks/typing from those
+  // fields, with an explicit "Browser handmatig bedienen" toggle to make it
+  // interactive again when someone actually wants to click around inside
+  // the live VM themselves (e.g. to resolve a Marktplaats challenge the
+  // automated flow doesn't recognize).
+  const showViewer = Boolean(novncUrl);
+  const typingNow = run.state === "waiting_login" || run.state === "waiting_code";
+  const [manualControl, setManualControl] = useState(false);
+  const viewerInteractive = manualControl || !typingNow;
   const [code, setCode] = useState("");
   const [codeStatus, setCodeStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [loginUsername, setLoginUsername] = useState("");
@@ -417,6 +450,10 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
     }
   }
 
+  // Vertical, mobile-first layout (part 3/6): live beeld boven, dan status,
+  // dan het MFA-invoerveld (altijd bereikbaar/typbaar — nooit meer als
+  // fullscreen pop-up die de rest van het scherm blokkeert), dan voortgang,
+  // dan foutmeldingen/resultaat.
   return (
     <div style={{ ...cardStyle(), borderColor: accent }}>
       <h3 style={{ marginTop: 0 }}>
@@ -427,131 +464,133 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
         </span>
       </h3>
 
-      {run.state === "waiting_login" && (
-        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400e" }}>
-          Niet ingelogd — zie de pop-up om in te loggen.
-        </div>
-      )}
-
-      {run.state === "waiting_code" && (
-        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400e" }}>
-          Marktplaats vraagt een verificatiecode — zie de pop-up om &apos;m in te vullen.
-        </div>
-      )}
-
-      {run.state === "waiting_login" && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(17, 17, 17, 0.55)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 1000,
-          }}
-        >
-          <div style={{ background: "#fff", borderRadius: 14, padding: 20, width: "100%", maxWidth: 420, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#1f3049", marginBottom: 4 }}>Inloggen op Marktplaats</div>
-            <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 14 }}>Niet ingelogd — typ je Marktplaats-inloggegevens in.</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <input
-                type="email"
-                autoComplete="username"
-                autoFocus
-                value={loginUsername}
-                onChange={(e) => {
-                  setLoginUsername(e.target.value);
-                  setLoginStatus("idle");
-                }}
-                placeholder="e-mailadres"
-                style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 }}
-              />
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={loginPassword}
-                onChange={(e) => {
-                  setLoginPassword(e.target.value);
-                  setLoginStatus("idle");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitLogin();
-                }}
-                placeholder="wachtwoord"
-                style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16 }}
-              />
-              <button
-                onClick={submitLogin}
-                disabled={loginStatus === "sending" || !loginUsername.trim() || !loginPassword}
-                style={{ ...btnStyle(true), padding: "12px 14px", fontSize: 16 }}
-              >
-                {loginStatus === "sending" ? "Bezig…" : "Inloggen"}
-              </button>
-            </div>
-            {loginStatus === "sent" && <div style={{ marginTop: 10, fontSize: 13, color: "#16a34a" }}>Inloggegevens verstuurd naar de browser.</div>}
-            {loginStatus === "error" && <div style={{ marginTop: 10, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
-          </div>
-        </div>
-      )}
-
-      {run.state === "waiting_code" && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(17, 17, 17, 0.55)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 1000,
-          }}
-        >
-          <div style={{ background: "#fff", borderRadius: 14, padding: 20, width: "100%", maxWidth: 360, boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#1f3049", marginBottom: 4 }}>Verificatiecode</div>
-            <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 14 }}>Marktplaats vraagt een sms/e-mailcode — vul &apos;m hieronder in.</div>
-            <input
-              inputMode="numeric"
-              autoFocus
-              value={code}
-              onChange={(e) => {
-                setCode(e.target.value);
-                setCodeStatus("idle");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submitCode();
-              }}
-              placeholder="123456"
-              style={{ width: "100%", padding: "14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 24, letterSpacing: 4, textAlign: "center", boxSizing: "border-box" }}
-            />
-            <button
-              onClick={submitCode}
-              disabled={codeStatus === "sending" || !code.trim()}
-              style={{ ...btnStyle(true), width: "100%", marginTop: 10, padding: "12px 14px", fontSize: 16 }}
-            >
-              {codeStatus === "sending" ? "Bezig…" : "Versturen"}
-            </button>
-            {codeStatus === "sent" && <div style={{ marginTop: 10, fontSize: 13, color: "#16a34a" }}>Code verstuurd naar de browser.</div>}
-            {codeStatus === "error" && <div style={{ marginTop: 10, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
-          </div>
-        </div>
-      )}
-
       {showViewer && (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 6 }}>Live browser:</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 13, color: "#6b7280" }}>Live browser:</div>
+            <button
+              onClick={() => setManualControl((v) => !v)}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                padding: "4px 10px",
+                borderRadius: 999,
+                border: "1px solid " + (manualControl ? "#b45309" : "#d1d5db"),
+                background: manualControl ? "#fffbeb" : "#f9fafb",
+                color: manualControl ? "#92400e" : "#374151",
+                cursor: "pointer",
+              }}
+              title={typingNow ? "Schakel in om zelf in de live browser te klikken/typen in plaats van in het veld hieronder" : "Schakel in om zelf in de live browser te klikken/typen"}
+            >
+              {manualControl ? "✓ Browser handmatig bedienen" : "Browser handmatig bedienen"}
+            </button>
+          </div>
+          {typingNow && !manualControl && (
+            <div style={{ fontSize: 12, color: "#92400e", marginBottom: 6 }}>
+              Beeld is zichtbaar maar niet klikbaar, zodat je typen hieronder niet per ongeluk in de verkeerde plek terechtkomt. Zet &quot;Browser handmatig bedienen&quot; aan om er zelf in te werken.
+            </div>
+          )}
           <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 10", borderRadius: 10, overflow: "hidden", border: "1px solid #e7e9ec", background: "#111" }}>
             <iframe
-              src={`${novncUrl}/vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true${
-                novncPassword ? `&password=${encodeURIComponent(novncPassword)}` : ""
-              }`}
+              // SECURITY (part 4): geen wachtwoord in deze URL — zie
+              // route.ts. noVNC vraagt zelf om het wachtwoord binnen de
+              // iframe (over de WebSocket-verbinding, nooit in een
+              // querystring), wat de veilige, handmatige inlogmogelijkheid
+              // blijft.
+              src={`${novncUrl}/vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true`}
               title="Marktplaats browsersessie"
               allow="clipboard-read; clipboard-write"
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                border: 0,
+                pointerEvents: viewerInteractive ? "auto" : "none",
+              }}
+              tabIndex={viewerInteractive ? 0 : -1}
             />
           </div>
+        </div>
+      )}
+
+      {run.state === "waiting_login" && (
+        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12 }}>
+          <div style={{ fontSize: 13, color: "#92400e", marginBottom: 10 }}>Niet ingelogd op Marktplaats — vul hieronder in, of zet &quot;Browser handmatig bedienen&quot; aan om zelf in het beeld hierboven in te loggen.</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <input
+              type="email"
+              autoComplete="username"
+              value={loginUsername}
+              onChange={(e) => {
+                setLoginUsername(e.target.value);
+                setLoginStatus("idle");
+              }}
+              placeholder="e-mailadres"
+              style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16, boxSizing: "border-box" }}
+            />
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={loginPassword}
+              onChange={(e) => {
+                setLoginPassword(e.target.value);
+                setLoginStatus("idle");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitLogin();
+              }}
+              placeholder="wachtwoord"
+              style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 16, boxSizing: "border-box" }}
+            />
+            <button
+              onClick={submitLogin}
+              disabled={loginStatus === "sending" || !loginUsername.trim() || !loginPassword}
+              style={{ ...btnStyle(true), padding: "12px 14px", fontSize: 16 }}
+            >
+              {loginStatus === "sending" ? "Bezig…" : "Inloggen"}
+            </button>
+          </div>
+          {loginStatus === "sent" && <div style={{ marginTop: 10, fontSize: 13, color: "#16a34a" }}>Inloggegevens verstuurd naar de browser.</div>}
+          {loginStatus === "error" && <div style={{ marginTop: 10, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
+        </div>
+      )}
+
+      {run.state === "waiting_code" && (
+        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12 }}>
+          <div style={{ fontSize: 13, color: "#92400e", marginBottom: 10 }}>
+            {(run.codeAttempts ?? 0) > 0
+              ? "Vorige code was ongeldig of verlopen — vraag een nieuwe code aan via Marktplaats zelf (handmatig bedienen) en vul die hieronder in."
+              : "Marktplaats vraagt een sms/e-mailcode — vul 'm hieronder in."}
+          </div>
+          <input
+            inputMode="numeric"
+            value={code}
+            onChange={(e) => {
+              setCode(e.target.value);
+              setCodeStatus("idle");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitCode();
+            }}
+            placeholder="123456"
+            style={{ width: "100%", padding: "14px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 24, letterSpacing: 4, textAlign: "center", boxSizing: "border-box" }}
+          />
+          <button
+            onClick={submitCode}
+            disabled={codeStatus === "sending" || !code.trim()}
+            style={{ ...btnStyle(true), width: "100%", marginTop: 10, padding: "12px 14px", fontSize: 16 }}
+          >
+            {codeStatus === "sending" ? "Bezig…" : "Versturen"}
+          </button>
+          {codeStatus === "sent" && <div style={{ marginTop: 10, fontSize: 13, color: "#16a34a" }}>Code verstuurd — wordt gecontroleerd (nog geen bevestigde login).</div>}
+          {codeStatus === "error" && <div style={{ marginTop: 10, fontSize: 13, color: "#dc2626" }}>Versturen mislukt — probeer opnieuw.</div>}
+        </div>
+      )}
+
+      {run.state === "verifying_code" && (
+        <div style={{ marginBottom: 14, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 12, fontSize: 13, color: "#92400e" }}>
+          Code wordt gecontroleerd bij Marktplaats — nog niet bevestigd als geldige login.
         </div>
       )}
 
@@ -576,6 +615,18 @@ function BrowserTestStatusCard({ run, novncUrl, novncPassword }: { run: BrowserT
           </li>
         ))}
       </ul>
+
+      {Array.isArray(run.timings) && run.timings.length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>Tijd per stap:</div>
+          {run.timings.map((t, i) => (
+            <div key={`${t.step}-${i}`} style={{ display: "flex", justifyContent: "space-between", maxWidth: 320 }}>
+              <span>{t.step}</span>
+              <span>{(t.ms / 1000).toFixed(1)}s</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {run.message && (
         <div style={{ marginTop: 8, fontSize: 14, color: accent, fontWeight: 600 }}>{run.message}</div>
