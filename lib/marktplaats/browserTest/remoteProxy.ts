@@ -18,6 +18,18 @@ export function hasRemoteBrowserTest(): boolean {
   return remoteBaseUrl() !== null;
 }
 
+/**
+ * Public alias for remoteBaseUrl(), for the vnc-proxy route: when this
+ * instance has no local noVNC (e.g. running on Vercel), it redirects the
+ * browser straight to this origin's own copy of the vnc-proxy route instead
+ * of trying to relay the WebSocket traffic itself — something a Vercel
+ * serverless function can never do (no raw `upgrade` events). See
+ * app/api/marktplaats/browser-test/vnc-proxy/[...path]/route.ts.
+ */
+export function remoteBrowserTestOrigin(): string | null {
+  return remoteBaseUrl();
+}
+
 export async function proxyToRemoteBrowserTest(req: NextRequest, path: string): Promise<NextResponse> {
   const base = remoteBaseUrl();
   if (!base) {

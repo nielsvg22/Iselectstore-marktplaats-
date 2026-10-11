@@ -31,8 +31,11 @@ gosu app fluxbox &
 
 gosu app x11vnc -display "$DISPLAY" -forever -shared -rfbauth /home/app/.vnc/passwd -rfbport 5900 -quiet &
 
-# noVNC web client, proxied over plain HTTP on 6080 — put a TLS-terminating
-# reverse proxy (Coolify's own domain/Traefik) in front of this in production.
+# noVNC web client, listening on 6080, loopback-reachable from the Next.js
+# app started below (server.js proxies both the plain HTTP static files and
+# the raw WebSocket/RFB traffic to 127.0.0.1:6080 — see
+# app/api/marktplaats/browser-test/vnc-proxy/[...path]/route.ts). Port 6080
+# no longer needs to be reachable from outside this container at all.
 websockify --web /usr/share/novnc 6080 localhost:5900 &
 
 cleanup() {
@@ -40,4 +43,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# `npm start` now runs server.js (a thin wrapper around Next's own request
+# handler) instead of `next start` — the only difference is it also forwards
+# the live view's WebSocket traffic to websockify above. See server.js.
 exec gosu app npm start

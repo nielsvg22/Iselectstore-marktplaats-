@@ -1,11 +1,22 @@
 # Coolify/VPS image: runs the Next.js app AND a visible Chromium session
 # (Xvfb + x11vnc + noVNC) so the Marktplaats browser-test (lib/marktplaats/browserTest/)
-# can be watched and logged into from a normal web browser, at
-# https://<this-app>:6080/vnc.html — something Vercel's headless serverless
-# functions can never provide (see MARKTPLAATS_INTEGRATION.md).
+# can be watched and logged into from a normal web browser — something
+# Vercel's headless serverless functions can never provide (see
+# MARKTPLAATS_INTEGRATION.md).
+#
+# The live view is reached through the Next.js app itself, at
+# /api/marktplaats/browser-test/vnc-proxy/vnc.html?session=<token> (see that
+# route + server.js), never directly at the raw noVNC/websockify port —
+# that is why `npm start` now runs server.js, a thin custom server around
+# Next's own request handler that ALSO forwards the live view's raw
+# WebSocket (RFB) traffic to 127.0.0.1:6080, something `next start`'s server
+# cannot do (it never listens for HTTP `upgrade` events). Port 6080 itself
+# stays container-internal only; nothing outside needs to reach it directly
+# any more.
 #
 # This image is NOT used for the Vercel deployment — that keeps deploying
-# from the same repo via Vercel's own build, unaffected by this file.
+# from the same repo via Vercel's own build, unaffected by this file (and
+# never runs server.js — Vercel uses its own serverless infrastructure).
 
 FROM node:20-bookworm-slim
 
@@ -52,6 +63,9 @@ ENV NODE_ENV=production \
     MARKTPLAATS_BROWSER_PROFILE_DIR=/data/marktplaats-browser-profile \
     MARKTPLAATS_BROWSER_DEBUG_DIR=/data/marktplaats-debug
 
+# 6080 is kept exposed for debugging direct access to websockify from
+# inside Coolify's network if ever needed, but the app itself never needs
+# it published publicly any more — see the vnc-proxy route above.
 EXPOSE 3000 6080
 
 COPY docker/entrypoint.sh /entrypoint.sh

@@ -410,6 +410,52 @@ function BrowserTestStatusCard({ run, novncUrl }: { run: BrowserTestRun; novncUr
   const typingNow = run.state === "waiting_login" || run.state === "waiting_code";
   const [manualControl, setManualControl] = useState(false);
   const viewerInteractive = manualControl || !typingNow;
+  // Live-viewer session token (see app/api/marktplaats/browser-test/
+  // vnc-session/route.ts). The iframe never loads the raw noVNC URL any
+  // more — it loads our own vnc-proxy route, which only serves the viewer
+  // page (with the real VNC_PASSWORD injected into its BODY, never its
+  // URL) once this one-time, 60s token is presented and validated
+  // server-side. See vnc-proxy/[...path]/route.ts for the full explanation.
+  const [vncToken, setVncToken] = useState<string | null>(null);
+  const [vncError, setVncError] = useState<string | null>(null);
+  const [vncLoading, setVncLoading] = useState(false);
+  const [vncRetryNonce, setVncRetryNonce] = useState(0);
+
+  useEffect(() => {
+    if (!showViewer) return;
+    let cancelled = false;
+    setVncToken(null);
+    setVncError(null);
+    setVncLoading(true);
+    fetch("/api/marktplaats/browser-test/vnc-session", { method: "POST" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}) as { error?: string });
+          throw new Error(body.error || "Kon geen live sessie starten.");
+        }
+        return res.json() as Promise<{ token: string }>;
+      })
+      .then((data) => {
+        if (!cancelled) setVncToken(data.token);
+      })
+      .catch((err) => {
+        if (!cancelled) setVncError(err instanceof Error ? err.message : "Live weergave niet beschikbaar.");
+      })
+      .finally(() => {
+        if (!cancelled) setVncLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // run.runId: fetch a fresh token once per run, not on every status poll.
+    // vncRetryNonce: lets the "Opnieuw proberen" button force a refetch.
+  }, [showViewer, run.runId, vncRetryNonce]);
+
+  function retryVncSession() {
+    setVncError(null);
+    setVncRetryNonce((n) => n + 1);
+  }
+
   const [code, setCode] = useState("");
   const [codeStatus, setCodeStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [loginUsername, setLoginUsername] = useState("");
@@ -491,25 +537,76 @@ function BrowserTestStatusCard({ run, novncUrl }: { run: BrowserTestRun; novncUr
             </div>
           )}
           <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 10", borderRadius: 10, overflow: "hidden", border: "1px solid #e7e9ec", background: "#111" }}>
-            <iframe
-              // SECURITY (part 4): geen wachtwoord in deze URL — zie
-              // route.ts. noVNC vraagt zelf om het wachtwoord binnen de
-              // iframe (over de WebSocket-verbinding, nooit in een
-              // querystring), wat de veilige, handmatige inlogmogelijkheid
-              // blijft.
-              src={`${novncUrl}/vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true`}
-              title="Marktplaats browsersessie"
-              allow="clipboard-read; clipboard-write"
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                border: 0,
-                pointerEvents: viewerInteractive ? "auto" : "none",
-              }}
-              tabIndex={viewerInteractive ? 0 : -1}
-            />
+            {vncToken ? (
+              // SECURITY: geen wachtwoord in deze URL — enkel een kortlevend,
+              // eenmalig sessie-token. Onze eigen vnc-proxy-route (ons
+              // domein, niet het externe noVNC-adres) wisselt dit token
+              // server-side in voor het echte VNC_PASSWORD en stuurt dat
+              // alleen in de HTML-respons terug, nooit in een querystring —
+              // zie vnc-session/route.ts en vnc-proxy/[...path]/route.ts.
+              <iframe
+                key={vncToken}
+                src={`/api/marktplaats/browser-test/vnc-proxy/vnc.html?session=${encodeURIComponent(vncToken)}`}
+                title="Marktplaats browsersessie"
+                allow="clipboard-read; clipboard-write"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  border: 0,
+                  pointerEvents: viewerInteractive ? "auto" : "none",
+                }}
+                tabIndex={viewerInteractive ? 0 : -1}
+              />
+            ) : vncError ? (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 10,
+                  padding: 16,
+                  textAlign: "center",
+                  color: "#e5e7eb",
+                }}
+              >
+                <div style={{ fontSize: 13 }}>Live weergave niet beschikbaar — probeer opnieuw.</div>
+                <div style={{ fontSize: 12, color: "#9ca3af" }}>{vncError}</div>
+                <button
+                  onClick={retryVncSession}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    padding: "6px 14px",
+                    borderRadius: 999,
+                    border: "1px solid #4b5563",
+                    background: "#1f2937",
+                    color: "#e5e7eb",
+                    cursor: "pointer",
+                  }}
+                >
+                  Opnieuw proberen
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#9ca3af",
+                  fontSize: 13,
+                }}
+              >
+                {vncLoading ? "Live beeld laden…" : ""}
+              </div>
+            )}
           </div>
         </div>
       )}
