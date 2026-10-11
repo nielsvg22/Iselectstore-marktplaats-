@@ -339,6 +339,14 @@ export class MarktplaatsBrowserTestPublisher {
 
       if (await this.isLoggedIn(page)) {
         this.ok("Login", waitingLogged ? "Ingelogd — sessie lokaal opgeslagen in het Playwright-profiel" : "Bestaande sessie hergebruikt");
+        // setState() to "waiting_login"/"waiting_code" above only ever runs
+        // ONCE per run (waitingLogged guard / handleVerificationChallenge),
+        // and nothing ever set it back — so run.state stayed stuck on
+        // whichever wait state was last hit, for the rest of the run, even
+        // once login actually succeeded. The admin UI's live-VM view only
+        // shows during queued/running, so it silently stayed hidden for
+        // every later step too, not just the login/code wait itself.
+        setState(this.run, "running", "Ingelogd — formulier invullen");
         if (/login|inloggen|signin/i.test(page.url())) {
           await page.goto(this.config.placementUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
         }
