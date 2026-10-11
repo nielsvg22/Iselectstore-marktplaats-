@@ -35,6 +35,30 @@ function fileNameFor(url: string, index: number): string {
  * can pass real files to the Marktplaats file input. Shopify stays the source
  * of truth — nothing is stored permanently.
  */
+/**
+ * Bounded-concurrency map: runs `worker` over `items` with at most `limit` in
+ * flight at once instead of either fully sequential (slow — each image
+ * download used to wait for the previous one to finish) or fully parallel
+ * (which could hammer the Shopify CDN with 10+ simultaneous requests for a
+ * single product). No new dependency: a handful of self-advancing workers
+ * pulling from a shared index is all `p-limit` does internally anyway.
+ */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+const DOWNLOAD_CONCURRENCY = 4;
+
 export async function downloadImagesForBrowserTest(imageUrls: string[], runId: string): Promise<ImageDownloadResult> {
   const config = getBrowserTestConfig();
   const dir = path.join(config.tempImageRoot, runId);
@@ -42,22 +66,32 @@ export async function downloadImagesForBrowserTest(imageUrls: string[], runId: s
 
   const urls = imageUrls.slice(0, config.maxImages);
   const skipped = imageUrls.slice(config.maxImages);
-  const files: DownloadedImage[] = [];
-  const failures: { url: string; error: string }[] = [];
 
-  for (const url of urls) {
+  // Parallel with bounded concurrency (part 5: speed) — sequential downloads
+  // of 5-10 product photos used to add up to several seconds of pure network
+  // wait before Playwright could even touch the file input. The filename
+  // index must match download ORDER, not completion order, so the numeric
+  // prefix stays stable regardless of which request finishes first.
+  const outcomes = await mapWithConcurrency(urls, DOWNLOAD_CONCURRENCY, async (url, index) => {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.length === 0) throw new Error("leeg bestand");
-      const fileName = fileNameFor(url, files.length);
+      const fileName = fileNameFor(url, index);
       const filePath = path.join(dir, fileName);
       fs.writeFileSync(filePath, buffer);
-      files.push({ url, filePath, fileName });
+      return { ok: true as const, file: { url, filePath, fileName } };
     } catch (err) {
-      failures.push({ url, error: err instanceof Error ? err.message : String(err) });
+      return { ok: false as const, failure: { url, error: err instanceof Error ? err.message : String(err) } };
     }
+  });
+
+  const files: DownloadedImage[] = [];
+  const failures: { url: string; error: string }[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.ok) files.push(outcome.file);
+    else failures.push(outcome.failure);
   }
 
   return { dir, files, failures, skipped };
