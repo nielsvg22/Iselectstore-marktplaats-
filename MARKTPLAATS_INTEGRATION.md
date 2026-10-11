@@ -239,6 +239,29 @@ VPS in plaats van je eigen laptop.
   actief is, i.p.v. een losse tab/link — vooral bedoeld voor gebruik op
   telefoon, waar schakelen tussen twee pagina's onhandig is. Zonder deze
   env-var werkt alles zoals voorheen (losse noVNC-URL zelf opzoeken/delen).
+- **Beveiliging (onderdeel 4):** `VNC_PASSWORD` wordt NIET meer naar de
+  browser gestuurd door `GET /api/marktplaats/browser-test` en staat dus ook
+  niet meer in de iframe-`src` als `?password=...` (voorheen zichtbaar in
+  browserhistorie, servers/proxy-logs en de `Referer`-header). De iframe
+  laadt noVNC nu zonder wachtwoord in de URL; noVNC's eigen wachtwoordprompt
+  (binnen de iframe, over de WebSocket-verbinding) is de blijvende, veilige
+  handmatige inlogmogelijkheid. **Open risico, nog niet opgelost:** er is nu
+  geen niet-interactieve, token-gebaseerde manier om zonder het echte
+  wachtwoord te typen te verbinden — dat zou een losse WebSocket-proxy
+  vereisen die een kortlevend token naar het echte `VNC_PASSWORD` vertaalt,
+  en dat heeft een custom Node-server (met `ws`/`http-proxy`) nodig die dit
+  project nu niet heeft (Next.js' App Router API routes kunnen zelf geen
+  WebSocket-upgrade afhandelen). Dat is bewust buiten scope gehouden voor
+  deze opdracht (zie het rapport) en blijft een open vervolgstap.
+- **Open risico (onderdeel 4):** geen van de `/app/admin/**` of
+  `/app/api/marktplaats/**` routes heeft op dit moment enige vorm van
+  authenticatie/autorisatie — wie de URL kent/raadt kan bij een kale
+  deployment zonder extra voorzieningen (bv. een voorliggende
+  reverse-proxy met Basic Auth, of een Coolify-niveau toegangscontrole) de
+  live, ingelogde Marktplaats-sessie bedienen. Een volwaardig auth-systeem
+  bouwen viel buiten de scope van deze opdracht (expliciet zo aangegeven);
+  zet in de tussentijd minimaal de admin-routes achter een eigen
+  Basic-Auth/reverse-proxy-laag of een VPN, net als de noVNC-poort hierboven.
 
 **Environment-variabelen** (zie `.env.example`):
 
@@ -255,6 +278,39 @@ VPS in plaats van je eigen laptop.
 - Optioneel: `MARKTPLAATS_BROWSER_HEADLESS`, `MARKTPLAATS_BROWSER_CHANNEL`
   (bv. `chrome`), `MARKTPLAATS_BROWSER_LOGIN_TIMEOUT_MS`,
   `MARKTPLAATS_BROWSER_NAV_TIMEOUT_MS`, `MARKTPLAATS_BROWSER_MAX_IMAGES`.
+- `MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=false` — als
+  `launchPersistentContext()` het vaste profiel (`MARKTPLAATS_BROWSER_PROFILE_DIR`)
+  niet kan openen voor een andere reden dan het bekende stale-SingletonLock-
+  geval, stopt de test nu met een duidelijke, zichtbare fout
+  (`ProfileUnavailableError`) in plaats van stilletjes over te schakelen naar
+  een tijdelijk/leeg profiel. Zet deze var op `true` om die oude fallback
+  terug te krijgen voor lokale dev — in productie moet dit op `false` (de
+  default) blijven staan, zodat een kapot profiel nooit onopgemerkt een
+  nieuwe, niet-ingelogde sessie wordt.
+- `MARKTPLAATS_BROWSER_DEBUG_ARTIFACTS=true` — screenshots + HTML-dumps per
+  stap (`snapshot()`). Zet op `false` in productie-achtige runs om de
+  disk-I/O daarvan te vermijden (onderdeel 5: snelheid).
+
+**Profiel-robuustheid (onderdeel 2 van de opdracht, code-level conclusie —
+geen live Coolify-toegang in deze sessie, dus niet live geverifieerd):**
+
+- `chromium.launchPersistentContext()` blijft de architectuur; cookies/sessie
+  staan in `MARKTPLAATS_BROWSER_PROFILE_DIR`, dat op Coolify naar een
+  persistent volume (`/data/...`) moet wijzen (zie hierboven) — zonder volume
+  overleeft de sessie alleen een container-restart, niet een herdeploy/nieuwe
+  build, puur omdat de volume-mount dan verdwijnt.
+- De bestaande stale-`SingletonLock`-opruiming (na een harde container-kill
+  tijdens een redeploy) blijft intact en is de ENIGE situatie die automatisch
+  op het vaste profiel wordt geretryd.
+- Elke andere opstartfout (bv. verkeerde bestandsrechten op het volume, een
+  profiel dat half geschreven is door een crash, een volume dat niet gemount
+  is) faalt nu hard met `ProfileUnavailableError` in plaats van een leeg
+  profiel te pakken — zie `MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE`
+  hierboven. Aanbevolen vervolgstap (niet in deze sessie uitgevoerd): controleer
+  op de draaiende Coolify-instance dat de `app`-user (non-root, zie Dockerfile)
+  schrijfrechten heeft op het volume, en dat het volume daadwerkelijk gemount
+  is vóórdat de container de eerste keer start (anders schrijft Chromium zijn
+  eerste profiel naar de ephemere laag, die een herdeploy alsnog wist).
 
 **Login**: standaard geen inloggegevens in code/git. Zonder
 `MARKTPLAATS_USERNAME`/`MARKTPLAATS_PASSWORD` zet de run-status zichzelf op
