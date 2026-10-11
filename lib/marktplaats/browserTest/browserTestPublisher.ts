@@ -16,8 +16,10 @@ import {
   compactMessage,
   isStopRequested,
   recordStatus,
+  recordTiming,
   setState,
   takeSubmittedLogin,
+  timed,
   waitForVerificationCode,
 } from "./status";
 import {
@@ -119,6 +121,29 @@ class StoppedByUserError extends Error {
   }
 }
 
+/**
+ * Thrown when the fixed Playwright profile cannot be opened for any reason
+ * other than the known stale-SingletonLock case, AND
+ * MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE is not explicitly set — see
+ * config.ts. Deliberately NOT swallowed into a silent throwaway-profile
+ * fallback: losing the real profile means losing the saved Marktplaats
+ * session (and its 2FA "trust this device" state), which otherwise forces a
+ * full re-login+MFA on every run without anyone noticing why.
+ */
+class ProfileUnavailableError extends Error {
+  readonly code = "MARKTPLAATS_PROFILE_UNAVAILABLE";
+  constructor(profileDir: string, cause: string) {
+    super(
+      `Het vaste Marktplaats-browserprofiel (${profileDir}) kon niet worden geopend: ${cause}. ` +
+        `De bestaande (ingelogde) sessie is NIET weggegooid — de test is gestopt in plaats van ` +
+        `stilletjes een leeg profiel te gebruiken. Controleer bestandsrechten/het persistent volume, ` +
+        `of zet MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=true als je bewust met een nieuw, leeg ` +
+        `profiel wilt testen (dan moet er opnieuw worden ingelogd).`
+    );
+    this.name = "ProfileUnavailableError";
+  }
+}
+
 export class MarktplaatsBrowserTestPublisher {
   private readonly config: BrowserTestConfig;
   private imageDir: string | null = null;
@@ -164,21 +189,21 @@ export class MarktplaatsBrowserTestPublisher {
     cleanupStaleImageDirs();
     setState(this.run, "running", "Browser starten");
 
-    const context = await this.ensureContext();
+    const context = await timed(this.run, "Browser starten", () => this.ensureContext());
     const page = await this.resolvePage(context);
 
     try {
       await this.openPlacementPage(page);
       await this.autoAcceptCookies(page);
       await this.snapshot(page, "00-plaatsingspagina");
-      await this.ensureLoggedIn(page);
+      await timed(this.run, "Login/MFA", () => this.ensureLoggedIn(page));
       await this.snapshot(page, "01-ingelogd");
 
       // De echte site is een wizard: stap 1 kent ALLEEN een titelveld en drie
       // cascaderende rubriek-dropdowns. Alles wat daar niet bestaat mag dus
       // pas ná "Verder" worden ingevuld.
       await this.fillStepOne(page, draft);
-      const advanced = await this.selectCategoryAndAdvance(page, draft);
+      const advanced = await timed(this.run, "Categorie selecteren", () => this.selectCategoryAndAdvance(page, draft));
       await this.snapshot(page, "02-detailformulier");
 
       if (!advanced) {
@@ -194,10 +219,12 @@ export class MarktplaatsBrowserTestPublisher {
         return;
       }
 
-      await this.uploadImages(page, draft);
-      await this.fillCoreFields(page, draft);
-      await this.fillStructuredFields(page, draft);
-      await this.fillSellerFields(page);
+      await timed(this.run, "Foto's uploaden", () => this.uploadImages(page, draft));
+      await timed(this.run, "Formulier invullen", async () => {
+        await this.fillCoreFields(page, draft);
+        await this.fillStructuredFields(page, draft);
+        await this.fillSellerFields(page);
+      });
 
       await this.maybeAdvance(page);
       await this.snapshot(page, "03-formulier-gevuld");
@@ -267,10 +294,10 @@ export class MarktplaatsBrowserTestPublisher {
             `Verouderd lockbestand van een vorige (gestopte) container opgeruimd — bestaand profiel alsnog gebruikt.`
           );
         } catch (retryErr) {
-          context = await this.launchThrowawayProfile(launch, retryErr);
+          context = await this.handleProfileUnavailable(launch, retryErr);
         }
       } else {
-        context = await this.launchThrowawayProfile(launch, err);
+        context = await this.handleProfileUnavailable(launch, err);
       }
     }
 
@@ -280,15 +307,30 @@ export class MarktplaatsBrowserTestPublisher {
     return context;
   }
 
-  /** Last resort: a throwaway profile means the user has to log in once more. */
-  private async launchThrowawayProfile(
+  /**
+   * The fixed profile failed to open for a reason that is NOT the known
+   * stale-SingletonLock case. This used to silently fall back to a brand-new
+   * empty profile — which throws away the logged-in session (and any 2FA
+   * "trust this device" state) without telling anyone, so every later run
+   * quietly had to log in + pass MFA again. That is now a hard, visible
+   * failure by default (see ProfileUnavailableError): the person running the
+   * test must see and decide, instead of unknowingly losing the session.
+   * MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=true keeps the old
+   * behaviour available for local dev.
+   */
+  private async handleProfileUnavailable(
     launch: (userDataDir: string) => Promise<BrowserContext>,
     err: unknown
   ): Promise<BrowserContext> {
+    const reason = this.errMsg(err);
+    if (!this.config.allowThrowawayProfile) {
+      this.error("Browserprofiel", `Vast profiel onbeschikbaar (${reason}) — test gestopt, GEEN tijdelijk profiel gebruikt.`);
+      throw new ProfileUnavailableError(this.config.profileDir, reason);
+    }
     const fallback = path.join(this.config.profileDir, `tmp-${process.pid}-${Date.now()}`);
     this.warn(
       "Browserprofiel",
-      `Kon het vaste profiel niet openen (${this.errMsg(err)}) — tijdelijk profiel gebruikt.`
+      `Kon het vaste profiel niet openen (${reason}) — MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=true, dus een tijdelijk (leeg) profiel wordt gebruikt. Opnieuw inloggen is nodig.`
     );
     ensureDir(fallback);
     return launch(fallback);
@@ -454,14 +496,27 @@ export class MarktplaatsBrowserTestPublisher {
     return /beveiligingscontrole|verificatiecode|voer de code in|tweestapsverificatie/i.test(heading);
   }
 
+  /** Text Marktplaats shows next to the code field when a code was rejected or has expired. */
+  private static readonly INVALID_CODE_PATTERN = /onjuist|ongeldig|niet correct|verlopen|opnieuw aan|probeer het opnieuw/i;
+
   /**
    * Marktplaats asked for an SMS/e-mail verification code. Rather than make
    * someone switch into the embedded noVNC view to type it, the run pauses
    * in "waiting_code" state and the admin UI collects the code and posts it
    * to POST /api/marktplaats/browser-test/code, which resolves
    * waitForVerificationCode() below.
+   *
+   * Part 1 of the assignment: entering + submitting the code is NOT treated
+   * as success. After submission the run moves to "verifying_code" and
+   * waitForAuthenticationOutcome() explicitly waits for one of: navigation
+   * away from the challenge page combined with isLoggedIn() returning true
+   * (success → "authenticated"), a visible "invalid/expired code" message
+   * from Marktplaats itself (failure → back to "waiting_code" so a new code
+   * can be requested and entered through the official Marktplaats UI/live
+   * browser), a network error, or a timeout. Nothing is assumed.
    */
   private async handleVerificationChallenge(page: Page): Promise<void> {
+    const challengeUrl = page.url();
     setState(this.run, "waiting_code", "Marktplaats vraagt een verificatiecode");
     recordStatus(this.run, {
       field: "Verificatiecode",
@@ -480,10 +535,74 @@ export class MarktplaatsBrowserTestPublisher {
     }
 
     const filled = await this.enterVerificationCode(page, code);
-    if (filled) {
-      this.ok("Verificatiecode", "Code ingevuld en verzonden");
-    } else {
+    if (!filled) {
       this.warn("Verificatiecode", "Kon het invoerveld voor de code niet vinden — vul 'm zelf in via de live browser.");
+      return;
+    }
+
+    setState(this.run, "verifying_code", "Code verzonden — wachten op bevestiging van Marktplaats");
+    recordStatus(this.run, { field: "Verificatiecode", status: "info", detail: "Code verzonden — nog NIET bevestigd als geldig." });
+
+    const outcome = await this.waitForAuthenticationOutcome(page, challengeUrl, 20_000);
+    switch (outcome.kind) {
+      case "authenticated":
+        this.run.codeAttempts = 0;
+        this.ok("Verificatiecode", "Code geaccepteerd — sessie bevestigd geauthenticeerd");
+        setState(this.run, "authenticated", "Succesvol ingelogd");
+        return;
+      case "rejected":
+        this.run.codeAttempts = (this.run.codeAttempts ?? 0) + 1;
+        this.error(
+          "Verificatiecode",
+          `Code afgewezen door Marktplaats${outcome.detail ? ` ("${outcome.detail}")` : ""} — vraag een nieuwe code aan via de officiële Marktplaats-interface in de live browser en vul die opnieuw in.`
+        );
+        setState(this.run, "waiting_code", "Code ongeldig/verlopen — nieuwe code nodig");
+        return;
+      case "network_error":
+        this.warn("Verificatiecode", `Tijdelijke netwerkfout tijdens verifiëren (${outcome.detail}) — opnieuw proberen.`);
+        setState(this.run, "waiting_code", "Netwerkfout tijdens verifiëren — probeer opnieuw");
+        return;
+      default:
+        this.warn(
+          "Verificatiecode",
+          "Geen bevestiging en geen foutmelding gezien binnen de wachttijd — status blijft onbevestigd. Controleer de live browser handmatig."
+        );
+        setState(this.run, "waiting_code", "Onbevestigd na verzenden — controleer handmatig");
+    }
+  }
+
+  /**
+   * Explicit proof of authentication, never an assumption: either (a) the
+   * page navigated away from the 2FA challenge URL AND isLoggedIn() confirms
+   * an account marker, (b) Marktplaats shows its own "code is onjuist/
+   * verlopen" message, or (c) neither happens within timeoutMs. A thrown
+   * Playwright error (detached frame, closed page, …) is reported as
+   * "network_error" rather than silently treated as success or failure.
+   */
+  private async waitForAuthenticationOutcome(
+    page: Page,
+    challengeUrl: string,
+    timeoutMs: number
+  ): Promise<{ kind: "authenticated" } | { kind: "rejected"; detail: string } | { kind: "network_error"; detail: string } | { kind: "timeout" }> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (isStopRequested(this.run)) throw new StoppedByUserError();
+      try {
+        const stillOnChallenge = this.samePage(page.url(), challengeUrl) || (await this.isVerificationChallenge(page));
+        if (!stillOnChallenge && (await this.isLoggedIn(page))) {
+          return { kind: "authenticated" };
+        }
+
+        const errorNode = page.locator('[role="alert"], .hz-Text--error, .InputFeedback--error, [data-testid*="error"]').first();
+        const errorText = (await errorNode.innerText({ timeout: 300 }).catch(() => "")).trim();
+        if (errorText && MarktplaatsBrowserTestPublisher.INVALID_CODE_PATTERN.test(errorText)) {
+          return { kind: "rejected", detail: errorText.slice(0, 160) };
+        }
+      } catch (err) {
+        return { kind: "network_error", detail: this.errMsg(err) };
+      }
+      if (Date.now() >= deadline) return { kind: "timeout" };
+      await page.waitForTimeout(300).catch(() => {});
     }
   }
 
@@ -577,7 +696,7 @@ export class MarktplaatsBrowserTestPublisher {
       });
 
       await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => {});
-      await page.waitForTimeout(800).catch(() => {});
+      await this.settle(page, 1500);
 
       const stillOnLogin = /\/login|inloggen|signin|\/auth/i.test(page.url());
       if (stillOnLogin) {
@@ -625,16 +744,27 @@ export class MarktplaatsBrowserTestPublisher {
     // was looking at the login form, not the placement form.
     if (await this.isVerificationChallenge(page)) return false;
     try {
+      // Positive evidence only — part 1 of the assignment explicitly removes
+      // the old assumption that "no visible login button" is proof enough of
+      // being logged in. A page that is still loading, a layout change that
+      // moved/renamed the login button, or a transient blank state could all
+      // show zero login markers WITHOUT the user actually being logged in;
+      // treating that as "logged in" let the flow race ahead onto a form it
+      // was never actually authenticated for. Only an explicit account
+      // marker (profile/account link, or a visible "Uitloggen" control) now
+      // counts as proof — anything else is treated as "not logged in yet"
+      // and the caller's loop keeps waiting/polling instead of assuming.
       const accountMarkers = await page
-        .locator('a[href*="mijn-marktplaats" i], a[href*="/account" i], [data-testid*="profile" i], [data-testid*="account" i]')
+        .locator(
+          'a[href*="mijn-marktplaats" i], a[href*="/account" i], [data-testid*="profile" i], [data-testid*="account" i], button:has-text("Uitloggen"), a:has-text("Uitloggen")'
+        )
         .count();
-      if (accountMarkers > 0) return true;
-      const loginMarkers = await page
-        .locator('a[href*="login" i]:visible, button:has-text("Inloggen"):visible, a:has-text("Inloggen"):visible')
-        .count();
-      return loginMarkers === 0;
+      return accountMarkers > 0;
     } catch {
-      return true;
+      // On a genuine evaluation error (e.g. the page navigated mid-check) we
+      // do NOT default to "logged in" — an unconfirmed session must never be
+      // assumed valid. The caller's polling loop simply tries again.
+      return false;
     }
   }
 
@@ -694,6 +824,18 @@ export class MarktplaatsBrowserTestPublisher {
       { id: "#cat_sel_3", naam: "Type (L3)", kandidaten: this.typeCandidates(draft), verplicht: false, wacht: 8000 },
     ];
 
+    // Reuse an already-verified mapping (part 5: "hergebruik bestaande
+    // categoriemappings") — when a previous real run already discovered the
+    // numeric option value for this Shopify product type, select it
+    // directly by value instead of re-running the name-matching search
+    // below. Falls through to the text search when the known value is no
+    // longer present (Marktplaats changed its category tree).
+    const mappingVerified = !draft.category.l1CategoryId.includes("UNVERIFIED") && !draft.category.l2CategoryId.includes("UNVERIFIED");
+    const knownIds: Record<string, string | null> = {
+      "#cat_sel_1": mappingVerified ? draft.category.l1CategoryId : null,
+      "#cat_sel_2": mappingVerified ? draft.category.l2CategoryId : null,
+    };
+
     let gekozen = 0;
     let l1Value: string | null = null;
     let l2Value: string | null = null;
@@ -714,13 +856,17 @@ export class MarktplaatsBrowserTestPublisher {
         continue;
       }
       await this.waitForOptionCount(page, select, 2, 8000);
-      const optie = await this.selectByText(select, step.kandidaten);
+      const optie = (await this.selectByKnownValue(select, knownIds[step.id] ?? null)) ?? (await this.selectByText(select, step.kandidaten));
       if (optie) {
         gekozen += 1;
         this.ok(step.naam, `${optie.text} (id ${optie.value})`);
         if (step.id === "#cat_sel_1") l1Value = optie.value;
         if (step.id === "#cat_sel_2") l2Value = optie.value;
-        await page.waitForTimeout(800);
+        // Event-based instead of a blind fixed sleep: wait for the network
+        // to actually go quiet (the next cascade level's options load over
+        // XHR) rather than always paying the full 800ms regardless of how
+        // fast Marktplaats responds.
+        await this.settle(page, 800);
       } else {
         this.warn(
           step.naam,
@@ -829,6 +975,37 @@ export class MarktplaatsBrowserTestPublisher {
     return texts.filter(Boolean).length > 0
       ? `beschikbaar: ${texts.filter(Boolean).slice(0, 12).join(", ")}`
       : "geen opties geladen";
+  }
+
+  /**
+   * Fast path for a previously-verified category mapping: select the known
+   * option value directly instead of re-running the (slower) name-matching
+   * search in selectByText(). Returns null — not an error — when the value
+   * is no longer one of the dropdown's options, so the caller falls back to
+   * the text search transparently (Marktplaats occasionally renumbers its
+   * category tree).
+   */
+  private async selectByKnownValue(select: Locator, value: string | null): Promise<{ text: string; value: string } | null> {
+    if (!value) return null;
+    const options = await select
+      .evaluate((el) => [...(el as HTMLSelectElement).options].map((o) => ({ value: o.value, text: (o.textContent ?? "").trim() })))
+      .catch(() => [] as { value: string; text: string }[]);
+    const hit = options.find((o) => o.value === value);
+    if (!hit) return null;
+    await select.selectOption(hit.value);
+    return hit;
+  }
+
+  /**
+   * Bounded, event-based settle used after a selection/click that triggers a
+   * background XHR (e.g. the next category cascade loading its options):
+   * waits for the network to actually go quiet instead of always sleeping
+   * the full `capMs`, but still gives up after `capMs` so a page that keeps
+   * some unrelated connection open (analytics, websockets) never blocks the
+   * flow longer than the old fixed wait used to.
+   */
+  private async settle(page: Page, capMs: number): Promise<void> {
+    await page.waitForLoadState("networkidle", { timeout: capMs }).catch(() => {});
   }
 
   /** Exact → startsWith → contains, so a broad name still picks the right row. */
@@ -961,10 +1138,32 @@ export class MarktplaatsBrowserTestPublisher {
 
     try {
       await resolved.locator.setInputFiles(download.files.map((f) => f.filePath));
-      await page.waitForTimeout(2500);
+      // Event-based: wait for the thumbnail count to actually reach the
+      // uploaded file count (polled, capped) instead of always sleeping a
+      // fixed 2500ms regardless of upload speed. Falls back to a bounded
+      // networkidle wait when no thumbnail markup is found (layout change).
+      const uploaded = await this.waitForThumbnails(page, download.files.length, 6000);
+      if (!uploaded) await this.settle(page, 2500);
       this.ok("Afbeeldingen", `${download.files.length} afbeelding(en) toegevoegd`);
     } catch (err) {
       this.error("Afbeeldingen", `Uploaden mislukt: ${this.errMsg(err)}`);
+    }
+  }
+
+  /**
+   * Polls (bounded) for at least `expected` rendered image thumbnails near
+   * the file input, so the flow moves on as soon as the upload has actually
+   * finished rendering instead of always waiting the old fixed 2500ms.
+   */
+  private async waitForThumbnails(page: Page, expected: number, timeoutMs: number): Promise<boolean> {
+    if (expected <= 0) return true;
+    const deadline = Date.now() + timeoutMs;
+    const thumbnails = page.locator('img[src^="blob:"], img[src^="data:"], [data-testid*="image" i] img, [class*="thumbnail" i] img');
+    for (;;) {
+      const count = await thumbnails.count().catch(() => 0);
+      if (count >= expected) return true;
+      if (Date.now() >= deadline) return false;
+      await page.waitForTimeout(200).catch(() => {});
     }
   }
 
@@ -1438,7 +1637,7 @@ export class MarktplaatsBrowserTestPublisher {
       try {
         await resolved.locator.click();
         this.advances += 1;
-        await page.waitForTimeout(1500);
+        await this.settle(page, 1500);
         this.info("Volgende stap", `"${name}" aangeklikt om resterende velden te bereiken`);
       } catch (err) {
         this.warn("Volgende stap", `Doorklikken mislukt: ${this.errMsg(err)}`);
@@ -1643,6 +1842,10 @@ export class MarktplaatsBrowserTestPublisher {
   }
 
   private async snapshot(page: Page, step: string): Promise<void> {
+    // Disk I/O (a PNG + full HTML dump) on every single step adds up over a
+    // run and is only useful while actively debugging selectors — skip it
+    // entirely in production-like runs via MARKTPLAATS_BROWSER_DEBUG_ARTIFACTS=false.
+    if (!this.config.captureDebugArtifacts) return;
     try {
       const dir = ensureDir(this.config.debugDir);
       const base = `${this.run.runId}-${step}`;
