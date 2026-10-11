@@ -11,6 +11,14 @@ import path from "node:path";
  *
  *   MARKTPLAATS_BROWSER_TEST=true           feature off/on (default: off)
  *   MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false  click the final publish button
+ *   MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=false
+ *                                            allow a fresh/empty profile when
+ *                                            the real one can't be opened
+ *                                            (default: off — hard error instead)
+ *   MARKTPLAATS_BROWSER_DEBUG_ARTIFACTS=true
+ *                                            write screenshots/HTML dumps on
+ *                                            every step (default: on; set
+ *                                            false in production-like runs)
  *
  * Default is off/off: without explicit opt-in nothing runs and nothing can
  * ever be published through this path.
@@ -81,6 +89,24 @@ export interface BrowserTestConfig {
    */
   novncUrl: string | null;
   novncPassword: string | null;
+  /**
+   * Last-resort fallback: when the fixed profile cannot be opened for a
+   * reason OTHER than the known stale-SingletonLock case, ensureContext()
+   * used to silently fall back to a brand-new, empty profile — which quietly
+   * threw away the saved Marktplaats session (and the 2FA "trust this
+   * device" state with it), so the next run restarted the whole login/MFA
+   * dance without any visible explanation. Default false: production must
+   * hard-fail with an actionable error instead. Set true only for local dev
+   * when you explicitly want a throwaway profile instead of your real one.
+   */
+  allowThrowawayProfile: boolean;
+  /**
+   * Screenshots + HTML dumps (snapshot()) cost disk I/O on every step and are
+   * only useful while actively debugging a selector problem — default true
+   * locally, set MARKTPLAATS_BROWSER_DEBUG_ARTIFACTS=false in
+   * production-like runs to skip them entirely (part 5: speed).
+   */
+  captureDebugArtifacts: boolean;
 }
 
 export function getBrowserTestConfig(): BrowserTestConfig {
@@ -103,6 +129,8 @@ export function getBrowserTestConfig(): BrowserTestConfig {
     password: process.env.MARKTPLAATS_PASSWORD?.trim() || null,
     novncUrl: process.env.MARKTPLAATS_BROWSER_NOVNC_URL?.trim().replace(/\/$/, "") || null,
     novncPassword: process.env.VNC_PASSWORD?.trim() || null,
+    allowThrowawayProfile: envFlag("MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE", false),
+    captureDebugArtifacts: envFlag("MARKTPLAATS_BROWSER_DEBUG_ARTIFACTS", true),
   };
 }
 
