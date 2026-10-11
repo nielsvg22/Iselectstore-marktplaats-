@@ -606,6 +606,16 @@ export class MarktplaatsBrowserTestPublisher {
   private async isLoggedIn(page: Page): Promise<boolean> {
     const url = page.url();
     if (/\/login|inloggen|signin|\/auth/i.test(url)) return false;
+    // Real bug hit live: the 2FA interstitial's URL (…/two-factor-auth-setup/
+    // challenge?…&flow=login) doesn't match the check above (no "/login" with
+    // a leading slash, "auth" isn't preceded by one either), and that page
+    // shows no "Inloggen" button for the DOM-marker check below to catch
+    // either — so isLoggedIn() returned true while 2FA was still pending,
+    // ensureLoggedIn() skipped straight to the placement page instead of
+    // waiting for the code, got redirected back to the login form by
+    // Marktplaats, and every later field-fill step then failed because it
+    // was looking at the login form, not the placement form.
+    if (await this.isVerificationChallenge(page)) return false;
     try {
       const accountMarkers = await page
         .locator('a[href*="mijn-marktplaats" i], a[href*="/account" i], [data-testid*="profile" i], [data-testid*="account" i]')
