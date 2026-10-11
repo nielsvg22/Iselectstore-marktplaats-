@@ -15,7 +15,42 @@ export interface FieldStatus {
   detail?: string;
 }
 
-export type BrowserTestRunState = "queued" | "waiting_login" | "waiting_code" | "running" | "done" | "failed";
+/**
+ * Authentication/run state machine. The MFA path is exactly:
+ *   waiting_login → waiting_code → verifying_code → authenticated → running
+ *
+ * "verifying_code" exists because entering a code and Marktplaats actually
+ * accepting it are two different events — a code can be rejected (invalid),
+ * stale (expired) or simply never resolve (network hiccup), so "entered" is
+ * never treated as "logged in" (see ensureLoggedIn()/handleVerificationChallenge()
+ * in browserTestPublisher.ts). "authenticated" is a short-lived confirmation
+ * state entered only once isLoggedIn() has positively verified the session;
+ * the flow immediately moves on to "running" from there.
+ */
+export type BrowserTestRunState =
+  | "queued"
+  | "waiting_login"
+  | "waiting_code"
+  | "verifying_code"
+  | "authenticated"
+  | "running"
+  | "done"
+  | "failed";
+
+const ACTIVE_STATES: ReadonlySet<BrowserTestRunState> = new Set([
+  "queued",
+  "waiting_login",
+  "waiting_code",
+  "verifying_code",
+  "authenticated",
+  "running",
+]);
+
+/** One measured step, for the UI's "time per step" progress display (part 5/6 of the assignment). */
+export interface StepTiming {
+  step: string;
+  ms: number;
+}
 
 export interface BrowserTestRun {
   runId: string;
@@ -31,6 +66,10 @@ export interface BrowserTestRun {
   statuses: FieldStatus[];
   /** Set by requestStop() — polled cooperatively by the running Playwright flow. */
   stopRequested?: boolean;
+  /** Measured duration of each major step, in arrival order. See recordTiming(). */
+  timings: StepTiming[];
+  /** How many verification codes have been rejected/expired so far this run. */
+  codeAttempts?: number;
 }
 
 interface RunStore {
@@ -55,6 +94,7 @@ export function createRun(shopifyProductId: string): BrowserTestRun {
     startedAt: new Date().toISOString(),
     stoppedBeforeSubmit: false,
     statuses: [],
+    timings: [],
   };
   const s = store();
   s.runs.set(run.runId, run);
@@ -71,9 +111,7 @@ export function getRun(runId: string): BrowserTestRun | undefined {
 
 export function isRunActive(runId: string): boolean {
   const run = getRun(runId);
-  return Boolean(
-    run && (run.state === "queued" || run.state === "running" || run.state === "waiting_login" || run.state === "waiting_code")
-  );
+  return Boolean(run && ACTIVE_STATES.has(run.state));
 }
 
 /**
@@ -83,11 +121,27 @@ export function isRunActive(runId: string): boolean {
  * session.ts / browserTestPublisher.ts's resolvePage()).
  */
 export function findActiveRunForProduct(shopifyProductId: string): BrowserTestRun | undefined {
-  return [...store().runs.values()].find(
-    (r) =>
-      r.shopifyProductId === shopifyProductId &&
-      (r.state === "queued" || r.state === "running" || r.state === "waiting_login" || r.state === "waiting_code")
-  );
+  return [...store().runs.values()].find((r) => r.shopifyProductId === shopifyProductId && ACTIVE_STATES.has(r.state));
+}
+
+/**
+ * Appends one measured step duration (part 5: timing instrumentation, part 6:
+ * the UI's "time per step" display). Never throws — timing is diagnostic
+ * only and must never break a run.
+ */
+export function recordTiming(run: BrowserTestRun, step: string, ms: number): void {
+  if (!Array.isArray(run.timings)) run.timings = [];
+  run.timings.push({ step, ms: Math.round(ms) });
+}
+
+/** Wraps an async step, timing it and recording the result either way. */
+export async function timed<T>(run: BrowserTestRun, step: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    recordTiming(run, step, Date.now() - start);
+  }
 }
 
 /**
