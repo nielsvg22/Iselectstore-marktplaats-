@@ -107,10 +107,19 @@ CREATE TABLE IF NOT EXISTS goedgeplaatst_product_link (
   mock BOOLEAN NOT NULL DEFAULT false,
   last_sync_at TIMESTAMPTZ,
   last_error TEXT,
+  -- The attribute key/label/value triples actually sent in POST /ads/ for
+  -- this ad, so verifyAd() (lib/goedgeplaatst/service.ts) can diff them
+  -- against what GET /ads/ confirms was saved (STAP 7/8) without
+  -- re-deriving the mapping.
+  sent_attributes JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (link_key, environment)
 );
+
+-- Backfills the column on an already-deployed database, where the
+-- CREATE TABLE IF NOT EXISTS above is a no-op.
+ALTER TABLE goedgeplaatst_product_link ADD COLUMN IF NOT EXISTS sent_attributes JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_goedgeplaatst_link_shopify ON goedgeplaatst_product_link(shopify_product_id);
 

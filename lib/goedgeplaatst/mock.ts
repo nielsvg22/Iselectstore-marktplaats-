@@ -37,6 +37,14 @@ export function getMockCategoryAttributes(categoryId: number): GoedgeplaatstCate
           { key: "mock_conditie", label: "Conditie", type: "LIST", mandatory: true, writable: true, updatable: true, values: [{ value: "Als nieuw" }, { value: "Zeer nette staat" }, { value: "Nette staat" }] },
           { key: "mock_kleur", label: "Kleur", type: "STRING", mandatory: false, writable: true, updatable: true },
           { key: "mock_opslagcapaciteit", label: "Opslagcapaciteit", type: "LIST", mandatory: false, writable: true, updatable: true, values: [{ value: "128GB" }, { value: "256GB" }, { value: "512GB" }] },
+          // Lets the portal's "delivery"/"ean" invulvelden (opdracht-punt 6)
+          // be exercised in mock mode too — same key names and the same
+          // "delivery" enum values confirmed live against GoedGeplaatst's
+          // own /attributes/ for categoryId 1737 (handed over for this task
+          // on 2026-10-12; re-verify with a live call before relying on this
+          // for a different category).
+          { key: "delivery", label: "Levering", type: "LIST", mandatory: false, writable: true, updatable: true, values: [{ value: "Ophalen of Verzenden" }, { value: "Ophalen" }, { value: "Verzenden" }] },
+          { key: "ean", label: "Productnummer EAN", type: "STRING", mandatory: false, writable: true, updatable: true },
           // Since 1 Feb 2025: DSA/GPSR-verplichte fabrikantgegevens — ook in mock aanwezig zodat de attributenlijst-UI deze
           // altijd kan tonen/testen, ook zonder echte API-sleutel.
           { key: "manufacturerTradename", label: "Handelsnaam fabrikant", type: "STRING", mandatory: true, writable: true, updatable: true },

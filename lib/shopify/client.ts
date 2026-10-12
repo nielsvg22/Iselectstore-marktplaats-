@@ -34,6 +34,15 @@ export interface ShopifyVariant {
   inventory_quantity: number;
   /** null/"" means Shopify isn't tracking inventory for this variant — a 0 quantity there means nothing. */
   inventory_management: string | null;
+  /**
+   * Shopify's own EAN/UPC field. Was already present in Shopify's raw REST
+   * response but silently dropped by this interface — added so real,
+   * already-available Shopify data can flow through to GoedGeplaatst's "ean"
+   * attribute (lib/marktplaats/orchestrator.ts / lib/goedgeplaatst/mapper.ts)
+   * instead of that field staying empty for no reason. null/"" means Shopify
+   * has no barcode set for this variant.
+   */
+  barcode: string | null;
 }
 
 export interface ShopifyProduct {

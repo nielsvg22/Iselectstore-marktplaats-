@@ -121,12 +121,42 @@ interface GoedgeplaatstLinkRow {
   last_error: string | null;
 }
 
+interface GoedgeplaatstAttributeStatus {
+  key: string;
+  label: string;
+  mandatory: boolean;
+  value: string | number | null;
+  source: string;
+}
+
 interface GoedgeplaatstCreateResult {
   mock: boolean;
   reused: boolean;
   adId: number;
   imagesAdded: number;
   missingMandatory: string[];
+  attributeStatuses: GoedgeplaatstAttributeStatus[];
+}
+
+interface GoedgeplaatstAttributeDiff {
+  confirmed: { key: string; label: string; value: string | number }[];
+  missing: { key: string; label: string; sentValue: string | number }[];
+  mismatched: { key: string; label: string; sentValue: string | number; returnedValue: string | number }[];
+}
+
+interface GoedgeplaatstVerifyResult {
+  mock: boolean;
+  found: boolean;
+  message: string;
+  attributeDiff: GoedgeplaatstAttributeDiff | null;
+}
+
+interface GoedgeplaatstAttributeDefinition {
+  key: string;
+  label: string;
+  mandatory: boolean;
+  writable: boolean;
+  values?: { value: string; label?: string }[];
 }
 
 /**
@@ -145,6 +175,11 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GoedgeplaatstCreateResult | null>(null);
   const [link, setLink] = useState<GoedgeplaatstLinkRow | null>(null);
+  const [attributes, setAttributes] = useState<GoedgeplaatstAttributeDefinition[]>([]);
+  const [delivery, setDelivery] = useState("");
+  const [ean, setEan] = useState("");
+  const [verifyResult, setVerifyResult] = useState<GoedgeplaatstVerifyResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     fetch("/api/goedgeplaatst/categories")
@@ -172,6 +207,27 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
       .catch(() => {});
   }, [shopifyProductId, productType]);
 
+  // Fetches the live/mock attribute list for the (auto-picked or manually
+  // chosen) category, purely to populate the "Levering" invulveld's options
+  // with GoedGeplaatst's own enum — never a hand-typed/invented list.
+  useEffect(() => {
+    if (categoryId === "") {
+      setAttributes([]);
+      return;
+    }
+    fetch("/api/goedgeplaatst/attributes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categoryId }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        setAttributes((data.categoryAttributes?.attributes ?? []).flatMap((a: { attributes: GoedgeplaatstAttributeDefinition[] }) => a.attributes));
+      })
+      .catch(() => {});
+  }, [categoryId]);
+
   const options: GoedgeplaatstCategoryOption[] = (categories?.groups ?? []).flatMap((g) =>
     g.categories.map((c) => ({ categoryId: c.categoryId, label: c.descriptions?.[0]?.description ?? String(c.categoryId) }))
   );
@@ -187,7 +243,14 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
       const res = await fetch("/api/goedgeplaatst/create-ad", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-admin-password": adminPassword },
-        body: JSON.stringify({ idempotencyKey: `shopify-${shopifyProductId}`, categoryId, shopifyProductId, force }),
+        body: JSON.stringify({
+          idempotencyKey: `shopify-${shopifyProductId}`,
+          categoryId,
+          shopifyProductId,
+          force,
+          delivery: delivery || undefined,
+          ean: ean || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Onbekende fout");
@@ -207,7 +270,25 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
     }
   }
 
+  /** STAP 7/8: GET /ads/ via onze eigen verify-route, vergeleken met wat we hebben verstuurd. */
+  async function verifyViaGoedgeplaatst() {
+    setVerifying(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/goedgeplaatst/verify?linkKey=${encodeURIComponent(`shopify:${shopifyProductId}`)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Onbekende fout");
+      setVerifyResult(data.result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setVerifying(false);
+    }
+  }
+
   const alreadyLinked = Boolean(link?.goedgeplaatst_ad_id);
+  const deliveryAttr = attributes.find((a) => a.key === "delivery");
+  const eanAttr = attributes.find((a) => a.key === "ean");
 
   return (
     <div style={{ ...cardStyle(), borderStyle: "dashed" }}>
@@ -276,6 +357,35 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
         </div>
       )}
 
+      {!alreadyLinked && (deliveryAttr || eanAttr) && (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+          {deliveryAttr && (
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#374151" }}>
+              Levering (geen Shopify-brondata — handmatig){" "}
+              <select value={delivery} onChange={(e) => setDelivery(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}>
+                <option value="">— niet opgeven —</option>
+                {(deliveryAttr.values ?? []).map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {v.label ?? v.value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {eanAttr && (
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#374151" }}>
+              EAN (optioneel — alleen als Shopify geen barcode heeft)
+              <input
+                value={ean}
+                onChange={(e) => setEan(e.target.value)}
+                placeholder="bijv. 0194253715816"
+                style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
+              />
+            </label>
+          )}
+        </div>
+      )}
+
       {!alreadyLinked && (
         <button onClick={() => createViaGoedgeplaatst(false)} disabled={loading} style={btnStyle()}>
           {loading ? "Bezig…" : "Opslaan als concept via GoedGeplaatst"}
@@ -288,6 +398,47 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
         <div style={{ marginTop: 10, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: 10, fontSize: 14 }}>
           {result.mock && <div style={{ fontWeight: 700, color: "#9a3412" }}>🧪 GESIMULEERD (mock)</div>}
           Concept {result.reused ? "hergebruikt" : "aangemaakt"} — adId <code>{result.adId}</code>, {result.imagesAdded} afbeelding(en).
+          {result.attributeStatuses?.length > 0 && (
+            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0", fontSize: 13, color: "#374151" }}>
+              {result.attributeStatuses.map((s) => (
+                <li key={s.key}>
+                  {s.value !== null ? "✅" : s.mandatory ? "❌" : "—"} {s.label}: {s.value !== null ? `${s.value} (${s.source})` : "leeg"}
+                </li>
+              ))}
+            </ul>
+          )}
+          {result.missingMandatory.length > 0 && (
+            <div style={{ marginTop: 6, color: "#dc2626", fontWeight: 600 }}>Ontbrekende verplichte kenmerken: {result.missingMandatory.join(", ")}</div>
+          )}
+        </div>
+      )}
+
+      {(alreadyLinked || result) && (
+        <div style={{ marginTop: 10 }}>
+          <button onClick={verifyViaGoedgeplaatst} disabled={verifying} style={btnStyle()}>
+            {verifying ? "Bezig…" : "Controleren via GET /ads/"}
+          </button>
+          {verifyResult && (
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              <div style={{ fontWeight: 600, color: verifyResult.found ? "#16a34a" : "#dc2626" }}>
+                {verifyResult.mock && <span style={{ color: "#9a3412" }}>🧪 GESIMULEERD (mock) — </span>}
+                {verifyResult.message}
+              </div>
+              {verifyResult.attributeDiff && (
+                <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0", color: "#374151" }}>
+                  {verifyResult.attributeDiff.confirmed.map((c) => (
+                    <li key={c.key} style={{ color: "#16a34a" }}>✅ {c.label}: {c.value} — bevestigd opgeslagen</li>
+                  ))}
+                  {verifyResult.attributeDiff.mismatched.map((m) => (
+                    <li key={m.key} style={{ color: "#b45309" }}>⚠ {m.label}: verstuurd &quot;{m.sentValue}&quot;, teruggekregen &quot;{m.returnedValue}&quot;</li>
+                  ))}
+                  {verifyResult.attributeDiff.missing.map((m) => (
+                    <li key={m.key} style={{ color: "#dc2626" }}>❌ {m.label}: verstuurd &quot;{m.sentValue}&quot;, niet terug in GET /ads/</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

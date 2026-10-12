@@ -42,7 +42,7 @@ function makeProduct(partial: Partial<ShopifyProduct> = {}): ShopifyProduct {
     handle: "iphone-15-pro-256gb",
     images: [],
     variants: [
-      { id: 1, price: "999.00", compare_at_price: null, inventory_quantity: 3, inventory_management: "shopify" },
+      { id: 1, price: "999.00", compare_at_price: null, inventory_quantity: 3, inventory_management: "shopify", barcode: null },
     ],
     ...partial,
   } as ShopifyProduct;
@@ -176,7 +176,7 @@ describe("checkProductObjectAndNotify", () => {
 
   it("never sends when the product has no tracked stock", async () => {
     const results = await checkProductObjectAndNotify(
-      makeProduct({ variants: [{ id: 1, price: "9.00", compare_at_price: null, inventory_quantity: 0, inventory_management: "shopify" }] })
+      makeProduct({ variants: [{ id: 1, price: "9.00", compare_at_price: null, inventory_quantity: 0, inventory_management: "shopify", barcode: null }] })
     );
     expect(results).toEqual([]);
     expect(providerMock.send).not.toHaveBeenCalled();

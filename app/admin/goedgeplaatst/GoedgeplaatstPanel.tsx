@@ -26,6 +26,7 @@ interface AttributeDefinition {
   type: string;
   mandatory: boolean;
   writable: boolean;
+  values?: { value: string; label?: string }[];
 }
 
 interface CreateAdResult {
@@ -37,6 +38,12 @@ interface CreateAdResult {
   imagesAdded: number;
 }
 
+interface AttributeDiff {
+  confirmed: { key: string; label: string; value: string | number }[];
+  missing: { key: string; label: string; sentValue: string | number }[];
+  mismatched: { key: string; label: string; sentValue: string | number; returnedValue: string | number }[];
+}
+
 interface VerifyResult {
   mock: boolean;
   found: boolean;
@@ -45,6 +52,7 @@ interface VerifyResult {
   visibleInCustomerPortal: boolean;
   onMarktplaats: boolean;
   message: string;
+  attributeDiff: AttributeDiff | null;
 }
 
 const stateLabel: Record<ConnectionStatus["state"], string> = {
@@ -79,6 +87,9 @@ export function GoedgeplaatstPanel() {
   const [description, setDescription] = useState("");
   const [priceEuros, setPriceEuros] = useState("");
   const [imageUrlsText, setImageUrlsText] = useState("");
+  // Opdracht-punt 6: invulvelden voor kenmerken zonder (of met alleen optionele) Shopify-brondata.
+  const [delivery, setDelivery] = useState("");
+  const [ean, setEan] = useState("");
 
   const [createResult, setCreateResult] = useState<CreateAdResult | null>(null);
   const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
@@ -99,6 +110,8 @@ export function GoedgeplaatstPanel() {
     setDescription("");
     setPriceEuros("");
     setImageUrlsText("");
+    setDelivery("");
+    setEan("");
     setCreateResult(null);
     setVerifyResult(null);
   }
@@ -189,6 +202,8 @@ export function GoedgeplaatstPanel() {
             priceEuros: Number(priceEuros),
             imageUrls: imageUrlsText.split("\n").map((s) => s.trim()).filter(Boolean),
           },
+          delivery: delivery || undefined,
+          ean: ean || undefined,
         }),
       });
       const data = await res.json();
@@ -296,6 +311,35 @@ export function GoedgeplaatstPanel() {
             </div>
           )}
 
+          {(() => {
+            const deliveryAttr = attributes.find((a) => a.key === "delivery");
+            const eanAttr = attributes.find((a) => a.key === "ean");
+            if (!deliveryAttr && !eanAttr) return null;
+            return (
+              <>
+                {deliveryAttr && (
+                  <label style={labelStyle()}>
+                    Levering (geen Shopify-brondata — altijd handmatig)
+                    <select value={delivery} onChange={(e) => setDelivery(e.target.value)} style={inputStyle()}>
+                      <option value="">— niet opgeven —</option>
+                      {(deliveryAttr.values ?? []).map((v) => (
+                        <option key={v.value} value={v.value}>
+                          {v.label ?? v.value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {eanAttr && (
+                  <label style={labelStyle()}>
+                    Productnummer EAN (optioneel — alleen invullen als Shopify geen barcode heeft)
+                    <input value={ean} onChange={(e) => setEan(e.target.value)} style={inputStyle()} placeholder="bijv. 0194253715816" />
+                  </label>
+                )}
+              </>
+            );
+          })()}
+
           <label style={labelStyle()}>
             Titel (5-60 tekens)
             <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} style={inputStyle()} />
@@ -333,6 +377,20 @@ export function GoedgeplaatstPanel() {
                 Concept aangemaakt — adId <code>{createResult.adId}</code>, {createResult.imagesAdded} afbeelding(en) toegevoegd.
               </div>
             )}
+            {createResult.attributeStatuses.length > 0 && (
+              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0", fontSize: 13, color: "#374151" }}>
+                {createResult.attributeStatuses.map((s) => (
+                  <li key={s.key}>
+                    {s.value !== null ? "✅" : s.mandatory ? "❌" : "—"} {s.label}: {s.value !== null ? `${s.value} (${s.source})` : "leeg"}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {createResult.missingMandatory.length > 0 && (
+              <div style={{ marginTop: 6, color: "#dc2626", fontWeight: 600 }}>
+                Ontbrekende verplichte kenmerken: {createResult.missingMandatory.join(", ")}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -362,6 +420,24 @@ export function GoedgeplaatstPanel() {
               <span>Zichtbaar in klantportaal: {verifyResult.visibleInCustomerPortal ? "ja" : "nee (sandbox hoeft dit niet te zijn)"}</span>
               <span>Gepubliceerd op Marktplaats: {verifyResult.onMarktplaats ? "ja" : "nee (nooit in deze versie)"}</span>
             </div>
+            {verifyResult.attributeDiff && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Kenmerken: verstuurd vs. opgeslagen (live via GET /ads/)</div>
+                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                  {verifyResult.attributeDiff.confirmed.map((c) => (
+                    <li key={c.key} style={{ color: "#16a34a" }}>✅ {c.label}: {c.value} — bevestigd opgeslagen</li>
+                  ))}
+                  {verifyResult.attributeDiff.mismatched.map((m) => (
+                    <li key={m.key} style={{ color: "#b45309" }}>
+                      ⚠ {m.label}: verstuurd &quot;{m.sentValue}&quot;, GoedGeplaatst geeft &quot;{m.returnedValue}&quot; terug
+                    </li>
+                  ))}
+                  {verifyResult.attributeDiff.missing.map((m) => (
+                    <li key={m.key} style={{ color: "#dc2626" }}>❌ {m.label}: verstuurd &quot;{m.sentValue}&quot;, komt niet terug in GET /ads/</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>

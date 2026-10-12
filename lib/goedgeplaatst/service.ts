@@ -18,7 +18,7 @@ import {
   GoedgeplaatstUser,
 } from "./types";
 import { MOCK_CATEGORY_GROUPS, MOCK_USER, buildMockAd, buildMockStatus, generateMockAdId, getMockCategoryAttributes } from "./mock";
-import { AdMappingResult, ManualAdInput, buildAdPayloadFromShopifyPreview, buildManualAdPayload } from "./mapper";
+import { AdMappingResult, ManualAdInput, ManualAttributeOverrides, buildAdPayloadFromShopifyPreview, buildManualAdPayload } from "./mapper";
 import { ProductPreview } from "../marktplaats/orchestrator";
 import { logGoedgeplaatstSync } from "./logging";
 
@@ -155,6 +155,8 @@ export interface CreateConceptAdParams {
   categoryId: number;
   manual?: ManualAdInput;
   preview?: ProductPreview;
+  /** Portal invulvelden (opdracht-punt 6) — delivery (altijd handmatig), ean (fallback als Shopify geen barcode heeft). */
+  manualOverrides?: ManualAttributeOverrides;
   /**
    * Explicit, user-initiated override of the idempotency check (STAP 9's
    * guard is "no ACCIDENTAL duplicates from a double click/retry" — this is
@@ -190,10 +192,12 @@ async function upsertLink(params: {
   conceptStatus: string;
   mock: boolean;
   lastError?: string | null;
+  /** The attribute key/value pairs we actually sent in POST /ads/ — stored so verifyAd (STAP 7/8) can diff against what GET /ads/ confirms was saved, without re-deriving the mapping. */
+  sentAttributes?: { key: string; label: string; value: string | number }[];
 }) {
   await query(
-    `INSERT INTO goedgeplaatst_product_link (link_key, environment, shopify_product_id, goedgeplaatst_ad_id, concept_status, mock, last_sync_at, last_error)
-     VALUES ($1,$2,$3,$4,$5,$6, now(), $7)
+    `INSERT INTO goedgeplaatst_product_link (link_key, environment, shopify_product_id, goedgeplaatst_ad_id, concept_status, mock, last_sync_at, last_error, sent_attributes)
+     VALUES ($1,$2,$3,$4,$5,$6, now(), $7, $8)
      ON CONFLICT (link_key, environment) DO UPDATE SET
        shopify_product_id = EXCLUDED.shopify_product_id,
        goedgeplaatst_ad_id = EXCLUDED.goedgeplaatst_ad_id,
@@ -201,8 +205,18 @@ async function upsertLink(params: {
        mock = EXCLUDED.mock,
        last_sync_at = now(),
        last_error = EXCLUDED.last_error,
+       sent_attributes = COALESCE(EXCLUDED.sent_attributes, goedgeplaatst_product_link.sent_attributes),
        updated_at = now()`,
-    [params.linkKey, params.environment, params.shopifyProductId, String(params.adId), params.conceptStatus, params.mock, params.lastError ?? null]
+    [
+      params.linkKey,
+      params.environment,
+      params.shopifyProductId,
+      String(params.adId),
+      params.conceptStatus,
+      params.mock,
+      params.lastError ?? null,
+      params.sentAttributes ? JSON.stringify(params.sentAttributes) : null,
+    ]
   );
 }
 
@@ -248,6 +262,7 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
       categoryId: params.categoryId,
       categoryAttributes: attrDefs,
       manufacturer: config.manufacturer,
+      manualOverrides: params.manualOverrides,
     });
     imageUrls = params.preview.imageUrls;
   } else if (params.manual) {
@@ -257,6 +272,7 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
       categoryId: params.categoryId,
       categoryAttributes: attrDefs,
       manufacturer: config.manufacturer,
+      manualOverrides: params.manualOverrides,
     });
     imageUrls = params.manual.imageUrls;
   } else {
@@ -326,6 +342,9 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
     adId,
     conceptStatus: "concept",
     mock,
+    sentAttributes: mapping.attributeStatuses
+      .filter((s) => s.value !== null)
+      .map((s) => ({ key: s.key, label: s.label, value: s.value as string | number })),
   });
   await logGoedgeplaatstSync({
     linkKey: params.linkKey,
@@ -355,6 +374,52 @@ export interface VerifyAdResult {
   visibleInCustomerPortal: boolean;
   onMarktplaats: boolean;
   message: string;
+  /**
+   * STAP 7/8: explicit comparison of what we SENT in POST /ads/ (persisted
+   * at creation time, see upsertLink's sentAttributes) against what GET
+   * /ads/ actually reports back now. null when nothing was persisted for
+   * this link (e.g. an ad created before this comparison existed, or a mock
+   * ad) — never fabricated as "confirmed" in that case.
+   */
+  attributeDiff: AttributeDiffResult | null;
+}
+
+export interface AttributeDiffResult {
+  confirmed: { key: string; label: string; value: string | number }[];
+  missing: { key: string; label: string; sentValue: string | number }[];
+  mismatched: { key: string; label: string; sentValue: string | number; returnedValue: string | number }[];
+}
+
+function diffSentVsReturnedAttributes(
+  sent: { key: string; label: string; value: string | number }[],
+  ad: GoedgeplaatstAd
+): AttributeDiffResult {
+  const returnedMap = new Map<string, string | number>();
+  for (const group of ad.attributes ?? []) {
+    for (const v of group.values ?? []) {
+      returnedMap.set(v.key, v.value);
+    }
+  }
+
+  const confirmed: AttributeDiffResult["confirmed"] = [];
+  const missing: AttributeDiffResult["missing"] = [];
+  const mismatched: AttributeDiffResult["mismatched"] = [];
+
+  for (const s of sent) {
+    if (!returnedMap.has(s.key)) {
+      missing.push({ key: s.key, label: s.label, sentValue: s.value });
+      continue;
+    }
+    const returnedValue = returnedMap.get(s.key)!;
+    // Loose string compare — GoedGeplaatst may echo a number as a string or vice versa.
+    if (String(returnedValue) === String(s.value)) {
+      confirmed.push({ key: s.key, label: s.label, value: s.value });
+    } else {
+      mismatched.push({ key: s.key, label: s.label, sentValue: s.value, returnedValue });
+    }
+  }
+
+  return { confirmed, missing, mismatched };
 }
 
 /**
@@ -364,8 +429,8 @@ export interface VerifyAdResult {
  */
 export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
   const config = getGoedgeplaatstConfig();
-  const rows = await query<{ goedgeplaatst_ad_id: string | null; mock: boolean }>(
-    "SELECT goedgeplaatst_ad_id, mock FROM goedgeplaatst_product_link WHERE link_key = $1 AND environment = $2",
+  const rows = await query<{ goedgeplaatst_ad_id: string | null; mock: boolean; sent_attributes: { key: string; label: string; value: string | number }[] | null }>(
+    "SELECT goedgeplaatst_ad_id, mock, sent_attributes FROM goedgeplaatst_product_link WHERE link_key = $1 AND environment = $2",
     [linkKey, config.environment]
   );
   const row = rows[0];
@@ -379,8 +444,23 @@ export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
       visibleInCustomerPortal: false,
       onMarktplaats: false,
       message: "Geen GoedGeplaatst-advertentie gevonden voor deze koppeling — maak er eerst een aan.",
+      attributeDiff: null,
     };
   }
+  // pg returns a JSONB column already parsed; a plain-text fallback (should
+  // not happen for this column, but cheap to guard) is parsed defensively.
+  const sentAttributes: { key: string; label: string; value: string | number }[] =
+    Array.isArray(row.sent_attributes)
+      ? row.sent_attributes
+      : typeof row.sent_attributes === "string"
+      ? (() => {
+          try {
+            return JSON.parse(row.sent_attributes as unknown as string);
+          } catch {
+            return [];
+          }
+        })()
+      : [];
 
   const adId = Number(row.goedgeplaatst_ad_id);
 
@@ -395,6 +475,7 @@ export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
       visibleInCustomerPortal: false,
       onMarktplaats: false,
       message: "GESIMULEERD (mock) resultaat — geen echte GoedGeplaatst-aanroep.",
+      attributeDiff: null,
     };
   }
 
@@ -411,6 +492,7 @@ export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
         visibleInCustomerPortal: false,
         onMarktplaats: false,
         message: `GET /ads/ gaf de advertentie (adId ${adId}) niet terug — nog niet (zeker) opgeslagen in GoedGeplaatst.`,
+        attributeDiff: null,
       };
     }
 
@@ -423,6 +505,8 @@ export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
 
     const onlineOnAnyPortal = Boolean(status?.portals?.some((p) => p.publish?.online));
     await logGoedgeplaatstSync({ linkKey, goedgeplaatstAdId: adId, action: "verify_ad", apiOperation: "GET /ads/", result: "ok" });
+
+    const attributeDiff = sentAttributes.length > 0 ? diffSentVsReturnedAttributes(sentAttributes, ad) : null;
 
     return {
       mock: false,
@@ -439,6 +523,7 @@ export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
         ad.status === "concept"
           ? `Advertentie succesvol opgeslagen in GoedGeplaatst als concept (${config.environment}).`
           : `Advertentie gevonden, maar status is "${ad.status}" (verwacht: concept).`,
+      attributeDiff,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -452,6 +537,7 @@ export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
       visibleInCustomerPortal: false,
       onMarktplaats: false,
       message,
+      attributeDiff: null,
     };
   }
 }

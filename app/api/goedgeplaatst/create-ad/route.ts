@@ -17,6 +17,15 @@ interface CreateAdBody {
     priceEuros: number;
     imageUrls: string[];
   };
+  /**
+   * Portal invulvelden (opdracht-punt 6) for attributes GoedGeplaatst
+   * supports but Shopify has no source for — delivery has NO Shopify
+   * equivalent at all, ean is only used as a fallback when the Shopify
+   * variant has no barcode set. Both optional; never required to create a
+   * concept ad.
+   */
+  delivery?: string;
+  ean?: string;
   /** "Opnieuw posten" — explicit override, see createConceptAd()'s `force` param. */
   force?: boolean;
 }
@@ -55,11 +64,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "categoryId (number) is verplicht — kies een categorie uit de live/mock categorielijst." }, { status: 400 });
   }
 
+  const manualOverrides = {
+    delivery: typeof body.delivery === "string" ? body.delivery : undefined,
+    ean: typeof body.ean === "string" ? body.ean : undefined,
+  };
+
   try {
     if (body.shopifyProductId) {
       const preview = await buildProductPreview(body.shopifyProductId);
       const linkKey = `shopify:${body.shopifyProductId}`;
-      const result = await createConceptAd({ linkKey, shopifyProductId: body.shopifyProductId, categoryId: Number(body.categoryId), preview, force: body.force === true });
+      const result = await createConceptAd({
+        linkKey,
+        shopifyProductId: body.shopifyProductId,
+        categoryId: Number(body.categoryId),
+        preview,
+        manualOverrides,
+        force: body.force === true,
+      });
       return NextResponse.json({ result });
     }
 
@@ -72,6 +93,7 @@ export async function POST(req: NextRequest) {
       shopifyProductId: null,
       categoryId: Number(body.categoryId),
       manual: { ...body.manual!, imageUrls: body.manual!.imageUrls.filter((u) => typeof u === "string" && u.trim().length > 0) },
+      manualOverrides,
       force: body.force === true,
     });
     return NextResponse.json({ result });

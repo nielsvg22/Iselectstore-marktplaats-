@@ -22,7 +22,18 @@ export interface MappedAttributeStatus {
   label: string;
   mandatory: boolean;
   value: string | number | null;
-  source: "shopify" | "manufacturer-config" | "missing";
+  /** "manual" = filled in through the portal's own invulveld (e.g. delivery, or EAN when Shopify has none) — never a Shopify or config value. */
+  source: "shopify" | "manufacturer-config" | "manual" | "missing";
+}
+
+/**
+ * Portal invulvelden (opdracht-punt 6) for attributes with no Shopify
+ * source (delivery) or an optional Shopify-first fallback (ean). Never
+ * invents a value by itself — only what the user actually typed/picked.
+ */
+export interface ManualAttributeOverrides {
+  delivery?: string;
+  ean?: string;
 }
 
 export interface AdMappingResult {
@@ -47,7 +58,8 @@ function toCents(euros: number): number {
 function resolveAttributes(
   categoryAttributes: GoedgeplaatstAttributeDefinition[],
   shopifyValues: Record<string, string | number>,
-  manufacturer: ManufacturerInfo
+  manufacturer: ManufacturerInfo,
+  manualKeys: Set<string> = new Set()
 ): { statuses: MappedAttributeStatus[]; missingMandatory: string[] } {
   const statuses: MappedAttributeStatus[] = [];
   const missingMandatory: string[] = [];
@@ -79,7 +91,7 @@ function resolveAttributes(
       } else {
         value = raw;
       }
-      source = "shopify";
+      source = manualKeys.has(attr.key) ? "manual" : "shopify";
     }
 
     statuses.push({ key: attr.key, label: attr.label, mandatory: attr.mandatory, value, source });
@@ -89,17 +101,44 @@ function resolveAttributes(
   return { statuses, missingMandatory };
 }
 
+/**
+ * Merges the portal's manual invulvelden (delivery/ean) into the
+ * shopify-derived attribute values, WITHOUT overwriting a real Shopify
+ * value that is already present (ean: Shopify's barcode always wins when
+ * set — the manual field is only a fallback for products Shopify has none
+ * for). Returns which keys ended up manually sourced so resolveAttributes
+ * can label them correctly instead of claiming they came from Shopify.
+ */
+function applyManualOverrides(
+  shopifyValues: Record<string, string | number>,
+  overrides?: ManualAttributeOverrides
+): { values: Record<string, string | number>; manualKeys: Set<string> } {
+  const values = { ...shopifyValues };
+  const manualKeys = new Set<string>();
+  if (overrides?.delivery && overrides.delivery.trim().length > 0) {
+    values.delivery = overrides.delivery.trim();
+    manualKeys.add("delivery");
+  }
+  if (overrides?.ean && overrides.ean.trim().length > 0 && (values.ean === undefined || values.ean === "")) {
+    values.ean = overrides.ean.trim();
+    manualKeys.add("ean");
+  }
+  return { values, manualKeys };
+}
+
 export function buildManualAdPayload(params: {
   input: ManualAdInput;
   userId: number;
   categoryId: number;
   categoryAttributes: GoedgeplaatstAttributeDefinition[];
   manufacturer: ManufacturerInfo;
+  manualOverrides?: ManualAttributeOverrides;
 }): AdMappingResult {
-  const { input, userId, categoryId, categoryAttributes, manufacturer } = params;
+  const { input, userId, categoryId, categoryAttributes, manufacturer, manualOverrides } = params;
   assertConceptStatusOnly("concept");
 
-  const { statuses, missingMandatory } = resolveAttributes(categoryAttributes, {}, manufacturer);
+  const { values, manualKeys } = applyManualOverrides({}, manualOverrides);
+  const { statuses, missingMandatory } = resolveAttributes(categoryAttributes, values, manufacturer, manualKeys);
 
   const payload: GoedgeplaatstCreateAdInput = {
     userId,
@@ -137,18 +176,40 @@ export function buildAdPayloadFromShopifyPreview(params: {
   categoryId: number;
   categoryAttributes: GoedgeplaatstAttributeDefinition[];
   manufacturer: ManufacturerInfo;
+  manualOverrides?: ManualAttributeOverrides;
 }): AdMappingResult {
-  const { preview, userId, categoryId, categoryAttributes, manufacturer } = params;
+  const { preview, userId, categoryId, categoryAttributes, manufacturer, manualOverrides } = params;
   assertConceptStatusOnly("concept");
 
+  // Deliberately `r.shopifyValue` (the raw Shopify-sourced value), NOT
+  // `r.marktplaatsValue`. `marktplaatsValue` only gets set when
+  // mapProductToAttributes() (lib/marktplaats/mappingEngine.ts) can validate
+  // the value against the MARKTPLAATS-side attribute catalog
+  // (attributeCache/getAttributesForProductType) — and that catalog is the
+  // mock_-prefixed placeholder set in this deployment (confirmed live: every
+  // single attribute, for a real iPhone product, came back
+  // "no_matching_attribute" / marktplaatsValue: null, even though the
+  // correct key — e.g. "storage", "type" — was already resolved). GoedGeplaatst
+  // has its OWN, already-correct, independently-fetched attribute catalog
+  // (listAttributesForCategory() above) that resolveAttributes() validates
+  // writability/mandatory against below — we don't need or want Marktplaats'
+  // separate (and here, broken) catalog in the loop at all. This mirrors
+  // exactly how lib/marktplaats/feedBuilder.ts already does it for the
+  // Admarkt feed (see its own module comment) — same trap, same fix.
   const shopifyValues: Record<string, string | number> = {};
   for (const r of preview.attributeResults) {
-    if (r.marktplaatsAttributeKey && r.marktplaatsValue !== null) {
-      shopifyValues[r.marktplaatsAttributeKey] = r.marktplaatsValue;
+    if (r.marktplaatsAttributeKey && r.shopifyValue && r.shopifyValue.trim().length > 0) {
+      shopifyValues[r.marktplaatsAttributeKey] = r.shopifyValue;
     }
   }
+  // Real, already-available Shopify data (variant barcode) — never invented.
+  // Takes priority over a manual override below (see applyManualOverrides).
+  if (preview.ean) {
+    shopifyValues.ean = preview.ean;
+  }
 
-  const { statuses, missingMandatory } = resolveAttributes(categoryAttributes, shopifyValues, manufacturer);
+  const { values, manualKeys } = applyManualOverrides(shopifyValues, manualOverrides);
+  const { statuses, missingMandatory } = resolveAttributes(categoryAttributes, values, manufacturer, manualKeys);
 
   // externalAdId: the assignment says this is required FOR PARTNER accounts
   // and, as a test value, to use the Shopify product id. Shopify's REST

@@ -23,6 +23,14 @@ export interface ProductPreview {
   payloadPreview: ReturnType<typeof buildMarktplaatsPayload>;
   imageUrls: string[];
   /**
+   * Shopify's variant `barcode` field, real EAN/UPC data when the merchant
+   * set one — never invented. null when Shopify has no barcode for the
+   * first variant. Consumed by lib/goedgeplaatst/mapper.ts to auto-fill the
+   * GoedGeplaatst "ean" attribute; a manual override in the portal is only
+   * used as a fallback when this is null (see GoedgeplaatstSection).
+   */
+  ean: string | null;
+  /**
    * Resolved template + structured Shopify metafield data (mkt.*) incl.
    * template defaults — the single input the mapping was computed from.
    * Exposed so downstream publishers (the future official API publisher
@@ -76,6 +84,8 @@ export async function buildProductPreview(shopifyProductId: string): Promise<Pro
 
   const imageUrls = product.images.sort((a, b) => a.position - b.position).map((img) => img.src);
   const price = Number(product.variants[0]?.price ?? 0);
+  const rawBarcode = product.variants[0]?.barcode ?? null;
+  const ean = rawBarcode && rawBarcode.trim().length > 0 ? rawBarcode.trim() : null;
 
   const validation = runPreflightValidation({
     template,
@@ -108,6 +118,7 @@ export async function buildProductPreview(shopifyProductId: string): Promise<Pro
     validation,
     payloadPreview,
     imageUrls,
+    ean,
     template,
     data,
     price,
