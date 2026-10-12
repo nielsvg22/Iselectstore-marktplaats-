@@ -18,6 +18,7 @@ export default async function AdminPage() {
         <Link href="/admin/sold-images" style={{ color: "#1f3049" }}>⚙️ VERKOCHT-sticker instellingen →</Link>
         <Link href="/admin/inventory" style={{ color: "#1f3049" }}>🔔 Voorraadmeldingen →</Link>
         <Link href="/admin/lifecycle" style={{ color: "#1f3049" }}>📦 28-dagen cleanup →</Link>
+        <Link href="/admin/goedgeplaatst" style={{ color: "#1f3049" }}>🧩 GoedGeplaatst API →</Link>
       </div>
 
       <div style={{ background: "#fff", border: "1px solid #e7e9ec", borderRadius: 12, padding: 16, marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>

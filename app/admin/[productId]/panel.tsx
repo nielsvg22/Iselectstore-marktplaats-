@@ -106,6 +106,139 @@ const browserStateLabel: Record<BrowserTestRun["state"], string> = {
   failed: "Mislukt",
 };
 
+interface GoedgeplaatstCategoryOption {
+  categoryId: number;
+  label: string;
+}
+
+interface GoedgeplaatstLinkRow {
+  link_key: string;
+  goedgeplaatst_ad_id: string | null;
+  concept_status: string;
+  mock: boolean;
+  last_sync_at: string | null;
+  last_error: string | null;
+}
+
+interface GoedgeplaatstCreateResult {
+  mock: boolean;
+  reused: boolean;
+  adId: number;
+  imagesAdded: number;
+  missingMandatory: string[];
+}
+
+/**
+ * Second, NAAST-ELKAAR-BESTAANDE plaatsingsoptie (STAP 8) — de officiële
+ * GoedGeplaatst REST API, los van de bestaande Playwright-test hierboven.
+ * Hergebruikt dezelfde /api/marktplaats/test-mapping preview (title/
+ * description/price/images komen uit orchestrator.buildProductPreview) in
+ * plaats van een eigen Shopify-ophaal-laag.
+ */
+function GoedgeplaatstSection({ shopifyProductId }: { shopifyProductId: string }) {
+  const [categories, setCategories] = useState<{ groups: { categories: { categoryId: number; descriptions: { description: string }[] }[] }[]; mock: boolean } | null>(null);
+  const [categoryId, setCategoryId] = useState<number | "">("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<GoedgeplaatstCreateResult | null>(null);
+  const [link, setLink] = useState<GoedgeplaatstLinkRow | null>(null);
+
+  useEffect(() => {
+    fetch("/api/goedgeplaatst/categories")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setCategories(data))
+      .catch(() => {});
+    fetch(`/api/goedgeplaatst/link?shopifyProductId=${encodeURIComponent(shopifyProductId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setLink(data.link))
+      .catch(() => {});
+  }, [shopifyProductId]);
+
+  const options: GoedgeplaatstCategoryOption[] = (categories?.groups ?? []).flatMap((g) =>
+    g.categories.map((c) => ({ categoryId: c.categoryId, label: c.descriptions?.[0]?.description ?? String(c.categoryId) }))
+  );
+
+  async function createViaGoedgeplaatst() {
+    if (categoryId === "") {
+      setError("Kies eerst een GoedGeplaatst-categorie.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/goedgeplaatst/create-ad", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-password": adminPassword },
+        body: JSON.stringify({ idempotencyKey: `shopify-${shopifyProductId}`, categoryId, shopifyProductId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Onbekende fout");
+      setResult(data.result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const alreadyLinked = Boolean(link?.goedgeplaatst_ad_id);
+
+  return (
+    <div style={{ ...cardStyle(), borderStyle: "dashed" }}>
+      <h3 style={{ marginTop: 0 }}>
+        GoedGeplaatst API {categories?.mock && <span style={{ fontSize: 11, fontWeight: 700, color: "#9a3412", background: "#fff7ed", borderRadius: 999, padding: "1px 8px", marginLeft: 6 }}>mock</span>}
+      </h3>
+      <p style={{ fontSize: 13, color: "#6b7280", marginTop: -6 }}>
+        Tweede plaatsingsmethode (los van de Playwright-test hierboven) — slaat uitsluitend een concept op via de officiële GoedGeplaatst
+        REST API. Titel/omschrijving/prijs/afbeeldingen komen automatisch uit Shopify.
+      </p>
+
+      {alreadyLinked ? (
+        <div style={{ fontSize: 14, color: "#16a34a", marginBottom: 10 }}>
+          ✅ Al gekoppeld — GoedGeplaatst adId <code>{link!.goedgeplaatst_ad_id}</code> ({link!.concept_status}
+          {link!.mock ? ", mock" : ""}). Opnieuw klikken maakt geen dubbele advertentie aan.
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <select value={categoryId} onChange={(e) => setCategoryId(Number(e.target.value))} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}>
+            <option value="" disabled>
+              Kies GoedGeplaatst-categorie…
+            </option>
+            {options.map((o) => (
+              <option key={o.categoryId} value={o.categoryId}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <input
+            type="password"
+            placeholder="Admin-wachtwoord"
+            value={adminPassword}
+            onChange={(e) => setAdminPassword(e.target.value)}
+            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
+          />
+        </div>
+      )}
+
+      {!alreadyLinked && (
+        <button onClick={createViaGoedgeplaatst} disabled={loading} style={btnStyle()}>
+          {loading ? "Bezig…" : "Opslaan als concept via GoedGeplaatst"}
+        </button>
+      )}
+
+      {error && <div style={{ marginTop: 10, color: "#dc2626", fontSize: 13 }}>{error}</div>}
+
+      {result && (
+        <div style={{ marginTop: 10, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 8, padding: 10, fontSize: 14 }}>
+          {result.mock && <div style={{ fontWeight: 700, color: "#9a3412" }}>🧪 GESIMULEERD (mock)</div>}
+          Concept {result.reused ? "hergebruikt" : "aangemaakt"} — adId <code>{result.adId}</code>, {result.imagesAdded} afbeelding(en).
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyProductId: string; productType: string }) {
   const [preview, setPreview] = useState<ProductPreview | null>(null);
   const [payload, setPayload] = useState<unknown>(null);
@@ -372,6 +505,8 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
           ✅ Gepubliceerd{publishResult.mock ? " (mock)" : ""} — advertentie-ID: <code>{publishResult.advertisementId}</code>
         </div>
       )}
+
+      <GoedgeplaatstSection shopifyProductId={shopifyProductId} />
     </div>
   );
 }
