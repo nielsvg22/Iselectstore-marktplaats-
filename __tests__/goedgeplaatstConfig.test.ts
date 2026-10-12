@@ -44,6 +44,18 @@ describe("GoedGeplaatst config + hard guards", () => {
     expect(() => assertEndpointAllowed("publish/batchauto")).toThrow(ForbiddenEndpointError);
   });
 
+  it("staat publish-paden alleen toe met GOEDGEPLAATST_ALLOW_PUBLISH=true", () => {
+    process.env.GOEDGEPLAATST_ALLOW_PUBLISH = "true";
+    expect(() => assertEndpointAllowed("publish/")).not.toThrow();
+    expect(getGoedgeplaatstConfig().allowPublish).toBe(true);
+  });
+
+  it("default allowPublish is false", () => {
+    delete process.env.GOEDGEPLAATST_ALLOW_PUBLISH;
+    expect(getGoedgeplaatstConfig().allowPublish).toBe(false);
+    expect(() => assertEndpointAllowed("publish/")).toThrow(ForbiddenEndpointError);
+  });
+
   it("staat niet-publish-paden toe", () => {
     expect(() => assertEndpointAllowed("ads/")).not.toThrow();
     expect(() => assertEndpointAllowed("images/123")).not.toThrow();

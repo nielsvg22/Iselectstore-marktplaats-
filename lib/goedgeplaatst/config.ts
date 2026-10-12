@@ -66,6 +66,7 @@ export interface GoedgeplaatstConfig {
    */
   manufacturer: ManufacturerInfo;
   requestTimeoutMs: number;
+  allowPublish: boolean;
 }
 
 export function getGoedgeplaatstConfig(): GoedgeplaatstConfig {
@@ -88,6 +89,15 @@ export function getGoedgeplaatstConfig(): GoedgeplaatstConfig {
       email: envString("GOEDGEPLAATST_MANUFACTURER_EMAIL"),
     },
     requestTimeoutMs: 15_000,
+    // Explicit, separate opt-in to actually publish a concept ad to a real
+    // portal (POST /publish/) — mirrors MARKTPLAATS_BROWSER_ALLOW_SUBMIT's
+    // pattern in lib/marktplaats/browserTest/config.ts exactly. Default
+    // false: the hard guard below (assertEndpointAllowed) still rejects
+    // every /publish/ call unless this is explicitly true. A real
+    // publication puts a real, public ad on Marktplaats and can incur real
+    // costs on the account — never flip this without the account holder's
+    // explicit, informed confirmation for that specific action.
+    allowPublish: envFlag("GOEDGEPLAATST_ALLOW_PUBLISH", false),
   };
 }
 
@@ -97,23 +107,29 @@ export function isGoedgeplaatstMockMode(): boolean {
 }
 
 /**
- * HARD GUARD (STAP 3 "VERBODEN"): no code path in this feature may ever call
- * a publish endpoint. This is deliberately independent of which paths the
- * client happens to implement — a future edit cannot accidentally wire one
- * up without this guard tripping first.
+ * HARD GUARD: by default, no code path in this feature may call a publish
+ * endpoint — deliberately independent of which paths the client happens to
+ * implement, so a future edit can't accidentally wire one up without this
+ * guard tripping first. The ONE exception is an explicit, separately-gated
+ * publish action (GOEDGEPLAATST_ALLOW_PUBLISH=true, see getGoedgeplaatstConfig)
+ * — even then, only lib/goedgeplaatst/service.ts's publishAdToMarktplaats()
+ * is meant to ever hit this path; every other call site still goes through
+ * this same check with the flag off.
  */
 const FORBIDDEN_PATH_PATTERN = /(^|\/)publish(\/|$)/i;
 
 export class ForbiddenEndpointError extends Error {
   readonly code = "GOEDGEPLAATST_PUBLISH_FORBIDDEN";
   constructor(path: string) {
-    super(`GoedGeplaatst-endpoint "${path}" is in deze versie verboden — alleen conceptadvertenties, nooit publicatie.`);
+    super(
+      `GoedGeplaatst-endpoint "${path}" is geblokkeerd — alleen conceptadvertenties, tenzij GOEDGEPLAATST_ALLOW_PUBLISH expliciet op true staat.`
+    );
     this.name = "ForbiddenEndpointError";
   }
 }
 
 export function assertEndpointAllowed(path: string): void {
-  if (FORBIDDEN_PATH_PATTERN.test(path)) {
+  if (FORBIDDEN_PATH_PATTERN.test(path) && !getGoedgeplaatstConfig().allowPublish) {
     throw new ForbiddenEndpointError(path);
   }
 }

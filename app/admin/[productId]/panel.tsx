@@ -180,6 +180,9 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
   const [ean, setEan] = useState("");
   const [verifyResult, setVerifyResult] = useState<GoedgeplaatstVerifyResult | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishResult, setPublishResult] = useState<{ mock: boolean; message: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/goedgeplaatst/categories")
@@ -286,6 +289,39 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
     }
   }
 
+  /**
+   * STAP 9 — de ENIGE plek die een concept daadwerkelijk live zet op
+   * Marktplaats (POST /publish/ via app/api/goedgeplaatst/publish/route.ts
+   * -> lib/goedgeplaatst/service.ts's publishAdToMarktplaats()). Dit is
+   * onomkeerbaar bedoeld: een echte, publieke advertentie, mogelijk met
+   * echte kosten. Nooit automatisch aangeroepen — alleen na deze expliciete
+   * knop + bevestigingsdialoog, en de server blokkeert het alsnog hard
+   * tenzij GOEDGEPLAATST_ALLOW_PUBLISH=true staat.
+   */
+  async function publishViaGoedgeplaatst() {
+    if (!link?.goedgeplaatst_ad_id) return;
+    const confirmed = window.confirm(
+      `Dit zet conceptadvertentie ${link.goedgeplaatst_ad_id} ECHT LIVE op Marktplaats.nl — publiek zichtbaar, en mogelijk met echte kosten op het account. Dit kan niet door deze knop ongedaan gemaakt worden. Doorgaan?`
+    );
+    if (!confirmed) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const res = await fetch("/api/goedgeplaatst/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-password": adminPassword },
+        body: JSON.stringify({ adId: Number(link.goedgeplaatst_ad_id) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Onbekende fout");
+      setPublishResult({ mock: data.result.mock, message: data.result.message });
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   const alreadyLinked = Boolean(link?.goedgeplaatst_ad_id);
   const deliveryAttr = attributes.find((a) => a.key === "delivery");
   const eanAttr = attributes.find((a) => a.key === "ean");
@@ -322,6 +358,27 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
             Voor als je de concept-advertentie in GoedGeplaatst hebt verwijderd en dit product nogmaals wilt testen — maakt een NIEUWE advertentie aan en
             vervangt de koppeling hierboven.
           </p>
+
+          <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #fecaca" }}>
+            <button
+              onClick={publishViaGoedgeplaatst}
+              disabled={publishing}
+              style={{ ...btnStyle(), background: "#dc2626", borderColor: "#dc2626" }}
+            >
+              {publishing ? "Bezig…" : "🔴 Nu publiceren op Marktplaats"}
+            </button>
+            <p style={{ fontSize: 12, color: "#b91c1c", marginTop: 4, marginBottom: 0 }}>
+              Zet deze conceptadvertentie ECHT live — publiek zichtbaar op marktplaats.nl, mogelijk met echte kosten. Vraagt eerst om
+              bevestiging. Geblokkeerd op de server tenzij <code>GOEDGEPLAATST_ALLOW_PUBLISH=true</code> staat.
+            </p>
+            {publishError && <div style={{ marginTop: 8, color: "#dc2626", fontSize: 13 }}>{publishError}</div>}
+            {publishResult && (
+              <div style={{ marginTop: 8, fontSize: 13, color: publishResult.mock ? "#9a3412" : "#16a34a", fontWeight: 600 }}>
+                {publishResult.mock ? "🧪 GESIMULEERD (mock) — " : "✅ "}
+                {publishResult.message}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>

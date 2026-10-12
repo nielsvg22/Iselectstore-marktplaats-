@@ -566,4 +566,42 @@ export async function getLinkForShopifyProduct(shopifyProductId: string) {
   return rows[0] ?? null;
 }
 
+export interface PublishAdResult {
+  mock: boolean;
+  adId: number;
+  portal: "marktplaats";
+  message: string;
+}
+
+/**
+ * Actually publishes a concept ad to Marktplaats — POST /publish/. This is
+ * the ONE call site in the entire codebase allowed to reach a /publish/
+ * endpoint, and even this one is blocked unless GOEDGEPLAATST_ALLOW_PUBLISH
+ * is explicitly true (see config.ts's assertEndpointAllowed — the real
+ * guard; this function does not duplicate that check, it relies on it).
+ * Puts a real, public advertisement on marktplaats.nl and can incur real
+ * costs on the account. Only ever call this after the account holder has
+ * explicitly, separately confirmed this specific action for this specific
+ * ad — never as a side effect of creating/updating a concept.
+ */
+export async function publishAdToMarktplaats(adId: number): Promise<PublishAdResult> {
+  const config = getGoedgeplaatstConfig();
+  if (isGoedgeplaatstMockMode()) {
+    await logGoedgeplaatstSync({ goedgeplaatstAdId: adId, action: "publish_ad", apiOperation: "POST /publish/ (mock)", result: "mock" });
+    return { mock: true, adId, portal: "marktplaats", message: "GESIMULEERD — geen echte publicatie (mock mode, geen API-sleutel)." };
+  }
+  if (!config.userId) {
+    throw new GoedgeplaatstConfigError("Geen GOEDGEPLAATST_USER_ID geconfigureerd — kan niet publiceren.");
+  }
+  try {
+    await goedgeplaatstRequest<unknown>("POST", "publish/", { userId: config.userId, adId, portal: "marktplaats" });
+    await logGoedgeplaatstSync({ goedgeplaatstAdId: adId, action: "publish_ad", apiOperation: "POST /publish/", result: "ok" });
+    return { mock: false, adId, portal: "marktplaats", message: "Publicatieverzoek verzonden naar Marktplaats." };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await logGoedgeplaatstSync({ goedgeplaatstAdId: adId, action: "publish_ad", apiOperation: "POST /publish/", result: "error", message });
+    throw err;
+  }
+}
+
 export { MOCK_USER };
