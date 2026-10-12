@@ -287,11 +287,20 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
 
   let adId: number;
   if (mock) {
-    adId = generateMockAdId();
+    adId = params.force && existing?.goedgeplaatst_ad_id ? Number(existing.goedgeplaatst_ad_id) : generateMockAdId();
   } else {
     try {
-      const ad = await goedgeplaatstRequest<GoedgeplaatstAd>("POST", "ads/", mapping.payload);
-      adId = ad.adId;
+      // "Opnieuw posten" (force=true) on a link that already has an adId:
+      // POST /ads/ with the SAME externalAdId is a no-op on GoedGeplaatst's
+      // side (live-confirmed — it silently returns the existing ad
+      // unchanged, title/description/attributes included, instead of
+      // creating or updating anything). PUT /ads/<adId> is the actual update
+      // call; POST stays for the real first-time-creation path.
+      const existingAdId = params.force && existing?.goedgeplaatst_ad_id ? Number(existing.goedgeplaatst_ad_id) : null;
+      const ad = existingAdId
+        ? await goedgeplaatstRequest<GoedgeplaatstAd>("PUT", `ads/${existingAdId}`, mapping.payload)
+        : await goedgeplaatstRequest<GoedgeplaatstAd>("POST", "ads/", mapping.payload);
+      adId = ad.adId ?? existingAdId!;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await upsertLink({
