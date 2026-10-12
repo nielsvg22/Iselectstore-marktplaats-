@@ -480,7 +480,10 @@ export async function verifyAd(linkKey: string): Promise<VerifyAdResult> {
   }
 
   try {
-    const ads = await goedgeplaatstRequest<GoedgeplaatstAd[]>("GET", `ads/?adId=${adId}`);
+    // userId is required here (confirmed live: without it GET /ads/ errors
+    // with "missing field: userId") — same requirement as the listConceptAds
+    // query below, just not previously applied to this single-ad lookup.
+    const ads = await goedgeplaatstRequest<GoedgeplaatstAd[]>("GET", `ads/?adId=${adId}&userId=${config.userId}`);
     const ad = ads.find((a) => a.adId === adId) ?? null;
     if (!ad) {
       return {
