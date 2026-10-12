@@ -8,6 +8,7 @@ import { ProductPreview } from "../marktplaats/orchestrator";
 import { CONDITION_ATTRIBUTE_MAP, formatStorageValue } from "../marktplaats/feedBuilder";
 import { GPSR_MANUFACTURER_ATTRIBUTE_KEYS, GoedgeplaatstAttributeDefinition, GoedgeplaatstCreateAdInput } from "./types";
 import { assertConceptStatusOnly, ManufacturerInfo } from "./config";
+import { GOEDGEPLAATST_ATTRIBUTE_MAP } from "./attributeMap";
 
 export interface ManualAdInput {
   title: string;
@@ -200,6 +201,26 @@ export function buildAdPayloadFromShopifyPreview(params: {
   for (const r of preview.attributeResults) {
     if (r.marktplaatsAttributeKey && r.shopifyValue && r.shopifyValue.trim().length > 0) {
       shopifyValues[r.marktplaatsAttributeKey] = r.shopifyValue;
+    }
+  }
+  // Second source: lib/goedgeplaatst/attributeMap.ts, a GoedGeplaatst-OWN,
+  // live-verified per-productType key map (independent of the
+  // marktplaats_attribute_mapping DB table above, which was discovered
+  // against Marktplaats' own consumer form and uses different key names/
+  // value formats for several categories — e.g. iPad/MacBook/iMac have no
+  // simlock/subscription/battery attribute at all on GoedGeplaatst, and
+  // "storage" there is a bucketed/differently-formatted value under a
+  // different key). Only fills a key the loop above didn't already set —
+  // iPhone's already-proven attributeResults path always wins when both
+  // happen to cover the same key.
+  const typeMap = GOEDGEPLAATST_ATTRIBUTE_MAP[preview.productType];
+  if (typeMap) {
+    for (const [goedgeplaatstKey, fieldMapping] of Object.entries(typeMap)) {
+      if (shopifyValues[goedgeplaatstKey] !== undefined) continue;
+      const raw = preview.data[fieldMapping.shopifyField];
+      if (!raw || raw.trim().length === 0) continue;
+      const value = fieldMapping.transform ? fieldMapping.transform(raw) : raw;
+      if (value !== null) shopifyValues[goedgeplaatstKey] = value;
     }
   }
   // Real, already-available Shopify data (variant barcode) — never invented.
