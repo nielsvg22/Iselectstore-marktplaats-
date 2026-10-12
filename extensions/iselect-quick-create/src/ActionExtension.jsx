@@ -93,7 +93,6 @@ function QuickCreateAction() {
   // aanmaken geüpload, want /api/shopify/quick-image heeft een bestaande
   // productId nodig.
   const [pendingFiles, setPendingFiles] = useState([]);
-  const [pendingThumbnails, setPendingThumbnails] = useState([]);
   const MAX_PENDING_FILES = 5;
 
   function fileIdentity(f) {
@@ -112,33 +111,6 @@ function QuickCreateAction() {
       return added.length === 0 ? prev : [...prev, ...added].slice(0, MAX_PENDING_FILES);
     });
   }
-
-  // Directe previews zodra er foto's gekozen zijn — zichtbaar bewijs dat de
-  // dropzone de bestanden daadwerkelijk heeft opgepikt. URL.createObjectURL
-  // blob:-URL's zijn alleen geldig binnen de realm die ze aanmaakte — de
-  // UI-extensie draait in een gesandboxte context los van het host-frame
-  // dat de thumbnail daadwerkelijk rendert, dus die blob:-URL's kwamen
-  // leeg binnen (live bevestigd). Een data:-URL is gewoon een string en
-  // werkt wél over die grens heen.
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all(
-      pendingFiles.map(
-        (f) =>
-          new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve({ name: fileIdentity(f), url: reader.result });
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(f);
-          })
-      )
-    ).then((thumbs) => {
-      if (!cancelled) setPendingThumbnails(thumbs.filter(Boolean));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [pendingFiles]);
 
   async function fetchDraft(auto) {
     if (busy || result) return;
@@ -379,13 +351,6 @@ function QuickCreateAction() {
                     onInput={(event) => handlePendingFiles(event.currentTarget.files)}
                     onChange={(event) => handlePendingFiles(event.currentTarget.files)}
                   />
-                  {pendingThumbnails.length > 0 ? (
-                    <s-stack direction="inline" gap="base">
-                      {pendingThumbnails.map((t) => (
-                        <s-thumbnail key={t.name} src={t.url} alt={t.name} size="base" />
-                      ))}
-                    </s-stack>
-                  ) : null}
                 </s-stack>
               </s-stack>
             }
