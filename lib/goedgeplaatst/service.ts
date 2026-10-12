@@ -130,7 +130,22 @@ export async function listAttributesForCategory(categoryId: number): Promise<Att
   const body: Record<string, unknown> = { categoryId: [categoryId], locale: ["nl_NL"] };
   if (config.userId) body.userId = config.userId;
   const data = await goedgeplaatstRequest<GoedgeplaatstCategoryAttributes[]>("POST", "attributes/", body);
-  const categoryAttributes = data[0] ?? { categoryId, attributes: [] };
+  // Confirmed live (categoryId 1737): the API's response shape for this
+  // endpoint is NOT stable across calls — without userId it returns ONE
+  // data[] entry whose own `attributes` array already holds both the
+  // "marktplaats" and "tweedehands" portal groups; WITH userId it instead
+  // returns TWO separate data[] entries, one per portal, in reversed order
+  // (tweedehands first). Taking data[0] silently dropped the marktplaats
+  // group in the userId case — every attribute then came from tweedehands
+  // (writable: false for an account not connected to that portal), so
+  // resolveAttributes() in mapper.ts filtered everything out. Merge every
+  // data[] entry's attribute groups instead of assuming which one is first;
+  // mapper.ts's existing writable-filter already picks the right portal
+  // once both are present.
+  const categoryAttributes: GoedgeplaatstCategoryAttributes = {
+    categoryId,
+    attributes: data.flatMap((entry) => entry.attributes ?? []),
+  };
   return { mock: false, categoryAttributes };
 }
 
