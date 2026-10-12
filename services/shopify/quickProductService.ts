@@ -49,6 +49,7 @@ export interface QuickProductResult {
   productType: string;
   shopifyTitle: string;
   marktplaatsTitle: string;
+  imagesAdded?: number;
 }
 
 export interface QuickProductRead {
@@ -137,6 +138,8 @@ export interface CreateQuickProductInput {
   productType: string;
   values: Record<string, unknown>;
   status: ProductStatus;
+  /** Optional photos to attach right after creation — filename + raw base64 (no "data:...;base64," prefix). Best-effort: a failed image never rolls back the already-created product. */
+  images?: { filename: string; data: string }[];
 }
 
 export async function createQuickProduct(
@@ -179,10 +182,23 @@ export async function createQuickProduct(
   const writes = metafieldsForTemplateData(template, values);
   await setProductMetafields(productId, writes);
 
+  let imagesAdded = 0;
+  for (const image of input.images ?? []) {
+    try {
+      await uploadOneImage(productId, image.filename, image.data);
+      imagesAdded += 1;
+    } catch (err) {
+      // The product itself already exists — one bad photo must never undo
+      // that, same posture as GoedGeplaatst's image-add step elsewhere.
+      const message = err instanceof Error ? err.message : String(err);
+      await logSync({ shopifyProductId: productId, action: "quick_create_image_error", message }).catch(() => {});
+    }
+  }
+
   await logSync({
     shopifyProductId: productId,
     action: "quick_create",
-    message: `type=${input.productType} status=${input.status} metafields=${writes.length} title=${shopifyTitle}`,
+    message: `type=${input.productType} status=${input.status} metafields=${writes.length} images=${imagesAdded}/${input.images?.length ?? 0} title=${shopifyTitle}`,
   });
 
   return {
@@ -193,6 +209,7 @@ export async function createQuickProduct(
     productType: input.productType,
     shopifyTitle,
     marktplaatsTitle,
+    imagesAdded,
   };
 }
 
@@ -314,13 +331,8 @@ export async function readQuickProduct(productId: string): Promise<QuickProductR
 
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 
-export async function addQuickProductImage(
-  productId: string,
-  filename: string,
-  dataBase64: string
-): Promise<{ imageId: number; src?: string }> {
-  const id = assertProductId(productId);
-
+/** Shared by addQuickProductImage (extension, post-creation) and createQuickProduct's own image upload (admin quick-create, at creation time) — same validation either way. */
+async function uploadOneImage(id: string, filename: string, dataBase64: string): Promise<{ imageId: number; src?: string }> {
   const safeName = String(filename || "").split(/[\\/]/).pop() || "product-image.jpg";
   if (!/\.(jpe?g|png|webp|gif)$/i.test(safeName)) {
     throw new QuickProductError(
@@ -364,4 +376,13 @@ export async function addQuickProductImage(
     message: `file=${safeName} bytes=${buffer.length}`,
   });
   return { imageId: image.id, src: image.src };
+}
+
+export async function addQuickProductImage(
+  productId: string,
+  filename: string,
+  dataBase64: string
+): Promise<{ imageId: number; src?: string }> {
+  const id = assertProductId(productId);
+  return uploadOneImage(id, filename, dataBase64);
 }

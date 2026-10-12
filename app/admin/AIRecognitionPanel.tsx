@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Level = "HIGH" | "MEDIUM" | "LOW";
 
@@ -102,6 +102,25 @@ export function AIRecognitionPanel({
       return combined.slice(0, MAX_FILES);
     });
   }
+
+  // Foto's gaan meteen naar de bovenliggende formulier-state zodra ze
+  // gekozen zijn — niet pas wanneer de gebruiker op "Analyseren" klikt.
+  // Zo kan iemand gewoon foto's toevoegen zonder perse AI-herkenning te
+  // willen draaien; de foto's komen hoe dan ook bij het aangemaakte product.
+  useEffect(() => {
+    if (!onImagesReady) return;
+    if (files.length === 0) {
+      onImagesReady([]);
+      return;
+    }
+    let cancelled = false;
+    Promise.all(files.map(async (f) => ({ dataUrl: await fileToDataUrl(f), filename: f.name }))).then((images) => {
+      if (!cancelled) onImagesReady(images);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [files, onImagesReady]);
 
   async function analyze() {
     if (files.length === 0) {

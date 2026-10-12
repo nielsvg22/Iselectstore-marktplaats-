@@ -16,6 +16,7 @@ interface CreatedProduct {
   productType: string;
   shopifyTitle: string;
   marktplaatsTitle: string;
+  imagesAdded?: number;
 }
 
 interface QuickCreateClientProps {
@@ -208,10 +209,15 @@ export function QuickCreateClient({ initialProductType, knownProductTypes, store
         );
         return;
       }
+      // dataUrl is "data:image/jpeg;base64,<...>" — the API wants raw base64.
+      const images = imagesRef.current.map((img) => ({
+        filename: img.filename,
+        data: img.dataUrl.split(",")[1] ?? "",
+      }));
       const res = await fetch("/api/admin/quick-create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productType, status, values: validation.values }),
+        body: JSON.stringify({ productType, status, values: validation.values, images }),
       });
       let data: (CreatedProduct & { error?: string; issues?: { key: string; message: string }[] }) | null = null;
       try {
@@ -258,6 +264,11 @@ export function QuickCreateClient({ initialProductType, knownProductTypes, store
           <div>
             <b>Status:</b> {statusLabel}
           </div>
+          {typeof created.imagesAdded === "number" && (
+            <div>
+              <b>Foto&apos;s:</b> {created.imagesAdded} toegevoegd
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 16, fontSize: 14 }}>
           {storeSubdomain && (
