@@ -136,15 +136,26 @@ export async function listAttributesForCategory(categoryId: number): Promise<Att
   // "marktplaats" and "tweedehands" portal groups; WITH userId it instead
   // returns TWO separate data[] entries, one per portal, in reversed order
   // (tweedehands first). Taking data[0] silently dropped the marktplaats
-  // group in the userId case — every attribute then came from tweedehands
-  // (writable: false for an account not connected to that portal), so
-  // resolveAttributes() in mapper.ts filtered everything out. Merge every
-  // data[] entry's attribute groups instead of assuming which one is first;
-  // mapper.ts's existing writable-filter already picks the right portal
-  // once both are present.
+  // group in the userId case.
+  //
+  // A LATER bug (confirmed live, categoryId 2110/iPad): merging every
+  // portal's attribute groups together — relying on mapper.ts's
+  // writable-filter to silently drop the unwanted portal's copy — only
+  // worked for iPhone (categoryId 1737) by coincidence, because its
+  // tweedehands "type" attribute happens to be writable:false there. iPad's
+  // "model" is writable:true in BOTH portals, so merging kept two "model"
+  // entries and GoedGeplaatst rejected the ad outright: "the following
+  // attributes have been provided more than once". We only ever submit to
+  // the "marktplaats" portal (see mapper.ts), so only that portal's
+  // attribute group should ever be used — never merge portals.
+  const allPortalGroups = data.flatMap((entry) => entry.attributes ?? []);
+  const marktplaatsGroups = allPortalGroups.filter((g) => g.portal === "marktplaats");
   const categoryAttributes: GoedgeplaatstCategoryAttributes = {
     categoryId,
-    attributes: data.flatMap((entry) => entry.attributes ?? []),
+    // Defensive fallback to every group only if the API ever omits a
+    // "marktplaats"-labeled group entirely (not observed live) — never as
+    // the normal path, to avoid reintroducing the duplicate-portal bug.
+    attributes: marktplaatsGroups.length > 0 ? marktplaatsGroups : allPortalGroups,
   };
   return { mock: false, categoryAttributes };
 }
