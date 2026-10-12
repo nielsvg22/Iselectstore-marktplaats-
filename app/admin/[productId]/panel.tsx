@@ -176,7 +176,7 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
     g.categories.map((c) => ({ categoryId: c.categoryId, label: c.descriptions?.[0]?.description ?? String(c.categoryId) }))
   );
 
-  async function createViaGoedgeplaatst() {
+  async function createViaGoedgeplaatst(force = false) {
     if (categoryId === "") {
       setError("Kies eerst een GoedGeplaatst-categorie.");
       return;
@@ -187,11 +187,19 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
       const res = await fetch("/api/goedgeplaatst/create-ad", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-admin-password": adminPassword },
-        body: JSON.stringify({ idempotencyKey: `shopify-${shopifyProductId}`, categoryId, shopifyProductId }),
+        body: JSON.stringify({ idempotencyKey: `shopify-${shopifyProductId}`, categoryId, shopifyProductId, force }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Onbekende fout");
       setResult(data.result);
+      // "Opnieuw posten" replaces the stored link with the new adId — refresh
+      // it so the status line reflects the new ad, not the deleted one.
+      if (force) {
+        fetch(`/api/goedgeplaatst/link?shopifyProductId=${encodeURIComponent(shopifyProductId)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => d && setLink(d.link))
+          .catch(() => {});
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -212,9 +220,27 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
       </p>
 
       {alreadyLinked ? (
-        <div style={{ fontSize: 14, color: "#16a34a", marginBottom: 10 }}>
-          ✅ Al gekoppeld — GoedGeplaatst adId <code>{link!.goedgeplaatst_ad_id}</code> ({link!.concept_status}
-          {link!.mock ? ", mock" : ""}). Opnieuw klikken maakt geen dubbele advertentie aan.
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 14, color: "#16a34a", marginBottom: 8 }}>
+            ✅ Al gekoppeld — GoedGeplaatst adId <code>{link!.goedgeplaatst_ad_id}</code> ({link!.concept_status}
+            {link!.mock ? ", mock" : ""}).
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="password"
+              placeholder="Admin-wachtwoord"
+              value={adminPassword}
+              onChange={(e) => setAdminPassword(e.target.value)}
+              style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
+            />
+            <button onClick={() => createViaGoedgeplaatst(true)} disabled={loading} style={btnStyle()}>
+              {loading ? "Bezig…" : "Opnieuw posten"}
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, marginBottom: 0 }}>
+            Voor als je de concept-advertentie in GoedGeplaatst hebt verwijderd en dit product nogmaals wilt testen — maakt een NIEUWE advertentie aan en
+            vervangt de koppeling hierboven.
+          </p>
         </div>
       ) : (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
@@ -251,7 +277,7 @@ function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProduc
       )}
 
       {!alreadyLinked && (
-        <button onClick={createViaGoedgeplaatst} disabled={loading} style={btnStyle()}>
+        <button onClick={() => createViaGoedgeplaatst(false)} disabled={loading} style={btnStyle()}>
           {loading ? "Bezig…" : "Opslaan als concept via GoedGeplaatst"}
         </button>
       )}

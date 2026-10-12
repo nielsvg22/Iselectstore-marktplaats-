@@ -140,6 +140,14 @@ export interface CreateConceptAdParams {
   categoryId: number;
   manual?: ManualAdInput;
   preview?: ProductPreview;
+  /**
+   * Explicit, user-initiated override of the idempotency check (STAP 9's
+   * guard is "no ACCIDENTAL duplicates from a double click/retry" — this is
+   * a deliberate "opnieuw posten" action, e.g. after deleting the concept
+   * ad directly in GoedGeplaatst to test the same product again). Still
+   * only ever creates status="concept" ads, same as every other path here.
+   */
+  force?: boolean;
 }
 
 export interface CreateConceptAdResult {
@@ -201,7 +209,7 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
   const mock = isGoedgeplaatstMockMode();
 
   const existing = await getExistingLink(params.linkKey, config.environment);
-  if (existing?.goedgeplaatst_ad_id) {
+  if (existing?.goedgeplaatst_ad_id && !params.force) {
     return {
       mock: existing.mock,
       reused: true,

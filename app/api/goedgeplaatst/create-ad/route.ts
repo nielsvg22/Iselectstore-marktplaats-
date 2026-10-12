@@ -17,6 +17,8 @@ interface CreateAdBody {
     priceEuros: number;
     imageUrls: string[];
   };
+  /** "Opnieuw posten" — explicit override, see createConceptAd()'s `force` param. */
+  force?: boolean;
 }
 
 function validateManual(manual: CreateAdBody["manual"]): string | null {
@@ -57,7 +59,7 @@ export async function POST(req: NextRequest) {
     if (body.shopifyProductId) {
       const preview = await buildProductPreview(body.shopifyProductId);
       const linkKey = `shopify:${body.shopifyProductId}`;
-      const result = await createConceptAd({ linkKey, shopifyProductId: body.shopifyProductId, categoryId: Number(body.categoryId), preview });
+      const result = await createConceptAd({ linkKey, shopifyProductId: body.shopifyProductId, categoryId: Number(body.categoryId), preview, force: body.force === true });
       return NextResponse.json({ result });
     }
 
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest) {
       shopifyProductId: null,
       categoryId: Number(body.categoryId),
       manual: { ...body.manual!, imageUrls: body.manual!.imageUrls.filter((u) => typeof u === "string" && u.trim().length > 0) },
+      force: body.force === true,
     });
     return NextResponse.json({ result });
   } catch (err) {
