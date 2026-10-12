@@ -133,6 +133,11 @@ export async function updateProduct(productId: string, product: Record<string, u
   return data.product as ShopifyProduct;
 }
 
+/** Shared by the products/create and products/update webhooks — a product is only worth acting on once it's actually sellable. */
+export function hasPositiveInventory(product: { variants: { inventory_management: string | null; inventory_quantity: number }[] }): boolean {
+  return product.variants.some((v) => v.inventory_management && v.inventory_quantity > 0);
+}
+
 /**
  * Lists products, paging through the REST collection so callers can scan the
  * whole catalogue instead of silently stopping at one 250-item page.

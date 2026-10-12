@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyShopifyWebhookHmac } from "@/lib/soldImage/webhookAuth";
-import { getProduct } from "@/lib/shopify/client";
+import { getProduct, hasPositiveInventory } from "@/lib/shopify/client";
 import { logSync } from "@/lib/logging";
 import { updateLifecycleState } from "@/services/catalog/lifecycleService";
 import { checkProductObjectAndNotify } from "@/services/inventory/notificationService";
@@ -8,10 +8,6 @@ import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
-
-function hasPositiveInventory(product: { variants: { inventory_management: string | null; inventory_quantity: number }[] }): boolean {
-  return product.variants.some((v) => v.inventory_management && v.inventory_quantity > 0);
-}
 
 export async function POST(req: NextRequest) {
   const secret = process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_APP_CLIENT_SECRET;
