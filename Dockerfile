@@ -85,7 +85,12 @@ RUN npm run build
 
 # Profile dir (login session) and debug dir live on a mounted volume in
 # Coolify so they survive redeploys — see MARKTPLAATS_INTEGRATION.md.
-RUN mkdir -p /data/marktplaats-browser-profile /data/marktplaats-debug \
+# /ms-playwright is created here unconditionally (not just by the Chromium
+# download step above) because `chown` fails outright on a path that
+# doesn't exist yet — when MARKTPLAATS_BROWSER_TEST=false skips that
+# download, the directory would otherwise never get created and broke the
+# build here. Harmless empty directory when unused.
+RUN mkdir -p /data/marktplaats-browser-profile /data/marktplaats-debug /ms-playwright \
     && chown -R app:app /app /data /ms-playwright
 
 ENV NODE_ENV=production \
