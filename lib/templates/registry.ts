@@ -8,26 +8,65 @@ function fields(...keys: string[]): FieldDef[] {
   });
 }
 
+/** Clones a FIELD_LIBRARY entry into a dropdown with a fixed set of options — used where free text led to real create-ad failures (see below). */
+function withOptions(key: string, options: string[]): FieldDef {
+  const base = FIELD_LIBRARY[key];
+  if (!base) throw new Error(`Unknown field key in template: ${key}`);
+  return { ...base, kind: "select", options };
+}
+
+/**
+ * iPhone's "model"/"type" attribute at GoedGeplaatst (categoryId 1737) is a
+ * fixed enum, not free text — live-confirmed via a real "invalid value"
+ * error (2026-10-12) when a merchant typed "19 pro max" / "17 pro max"
+ * (no such models, and missing the required "iPhone " prefix). Copied
+ * byte-for-byte from that error's "valid options" list, including its
+ * quirks (lowercase "xr"/"xs"/"xsmax", no bare "9"/"10" since those were
+ * marketed as X). Never hand-edit this without a fresh live confirmation.
+ */
+const IPHONE_MODEL_OPTIONS = [
+  "iPhone 2G Original", "iPhone 3G", "iPhone 3GS", "iPhone 4", "iPhone 4S",
+  "iPhone 5", "iPhone 5C", "iPhone 5S", "iPhone 6", "iPhone 6 Plus",
+  "iPhone 6S", "iPhone 6S Plus", "iPhone 7", "iPhone 7 Plus", "iPhone 8",
+  "iPhone 8 Plus", "iPhone 11", "iPhone 11 Pro", "iPhone 11 Pro Max",
+  "iPhone 12", "iPhone 12 Mini", "iPhone 12 Pro", "iPhone 12 Pro Max",
+  "iPhone 13", "iPhone 13 mini", "iPhone 13 Pro", "iPhone 13 Pro Max",
+  "iPhone 14", "iPhone 14 Plus", "iPhone 14 Pro", "iPhone 14 Pro Max",
+  "iPhone 15", "iPhone 15 Plus", "iPhone 15 Pro", "iPhone 15 Pro Max",
+  "iPhone 16", "iPhone 16 Plus", "iPhone 16 Pro", "iPhone 16 Pro Max",
+  "iPhone 16e", "iPhone 17 Air", "iPhone 17 Pro", "iPhone 17 Pro Max",
+  "iPhone 17e", "iPhone 18 Pro", "iPhone 18 Pro Max", "iPhone Duo",
+  "iPhone SE", "iPhone SE 2020", "iPhone SE (2022)", "iPhone X", "xr",
+  "xs", "xsmax", "Overige typen",
+];
+
+/**
+ * Same deal for "color" at categoryId 1737 — live-confirmed via the same
+ * error when a merchant typed "Oranje" (not a supported color there at all).
+ */
+const IPHONE_COLOR_OPTIONS = ["Blauw", "Geel", "Goud", "Grijs", "Groen", "Paars", "Rood", "Roze", "Wit", "Zilver", "Zwart"];
+
 const iphone: ProductTemplate = {
   productType: "iPhone",
-  fields: fields(
-    "model",
-    "generation",
-    "storage_gb",
-    "color",
-    "battery_percentage",
-    "sim_type",
-    "subscription",
-    "simlock",
-    "condition",
-    "warranty_months",
-    "accessories",
-    "box_included",
-    "cosmetic_notes",
-    "sell_price",
-    "new_price",
-    "manufacturer_name",
-  ),
+  fields: [
+    withOptions("model", IPHONE_MODEL_OPTIONS),
+    ...fields("generation", "storage_gb"),
+    withOptions("color", IPHONE_COLOR_OPTIONS),
+    ...fields(
+      "battery_percentage",
+      "sim_type",
+      "subscription",
+      "simlock",
+      "condition",
+      "warranty_months",
+      "accessories",
+      "box_included",
+      "cosmetic_notes",
+      "sell_price",
+      "new_price",
+      "manufacturer_name",
+    ),
+  ],
   shopifyTitleFields: ["model", "storage_gb", "color"],
   shopifyFeatureFields: ["model", "storage_gb", "color", "sim_type", "battery_percentage", "condition", "warranty_months"],
   marktplaatsTitleExtraFields: ["battery_percentage", "warranty_months"],
