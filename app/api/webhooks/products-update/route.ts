@@ -86,7 +86,12 @@ export async function POST(req: NextRequest) {
   // on an already-linked product is a cheap no-op DB read, nothing more.
   if (hasPositiveInventory(product)) {
     const existingLink = await getLinkForShopifyProduct(productId).catch(() => null);
-    if (!existingLink?.goedgeplaatst_ad_id) {
+    // concept_status="error" rows store goedgeplaatst_ad_id="0" as a
+    // placeholder (truthy string!) — only a genuinely succeeded concept
+    // should skip the retry, otherwise a past failure (e.g. missing photos,
+    // an invalid model name) would block every future retry forever.
+    const hasSucceededBefore = existingLink?.concept_status === "concept" && Number(existingLink.goedgeplaatst_ad_id) > 0;
+    if (!hasSucceededBefore) {
       await autoCreateGoedgeplaatstConceptAd(productId).catch(() => {
         /* autoCreateGoedgeplaatstConceptAd already logs its own failures */
       });

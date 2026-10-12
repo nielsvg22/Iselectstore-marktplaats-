@@ -238,7 +238,14 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
   const mock = isGoedgeplaatstMockMode();
 
   const existing = await getExistingLink(params.linkKey, config.environment);
-  if (existing?.goedgeplaatst_ad_id && !params.force) {
+  // A previous failed attempt (createConceptAd's own catch block below)
+  // stores concept_status="error" with goedgeplaatst_ad_id="0" as a
+  // placeholder — the string "0" is truthy, so checking goedgeplaatst_ad_id
+  // alone treated every past failure as an already-existing ad forever,
+  // silently blocking any retry (webhook or manual) unless force=true was
+  // passed explicitly. Only a genuinely succeeded concept should short-circuit.
+  const hasSucceededBefore = existing?.concept_status === "concept" && Number(existing.goedgeplaatst_ad_id) > 0;
+  if (hasSucceededBefore && !params.force) {
     return {
       mock: existing.mock,
       reused: true,
@@ -287,7 +294,7 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
 
   let adId: number;
   if (mock) {
-    adId = params.force && existing?.goedgeplaatst_ad_id ? Number(existing.goedgeplaatst_ad_id) : generateMockAdId();
+    adId = params.force && hasSucceededBefore ? Number(existing!.goedgeplaatst_ad_id) : generateMockAdId();
   } else {
     try {
       // "Opnieuw posten" (force=true) on a link that already has an adId:
@@ -296,7 +303,7 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
       // unchanged, title/description/attributes included, instead of
       // creating or updating anything). PUT /ads/<adId> is the actual update
       // call; POST stays for the real first-time-creation path.
-      const existingAdId = params.force && existing?.goedgeplaatst_ad_id ? Number(existing.goedgeplaatst_ad_id) : null;
+      const existingAdId = params.force && hasSucceededBefore ? Number(existing!.goedgeplaatst_ad_id) : null;
       const ad = existingAdId
         ? await goedgeplaatstRequest<GoedgeplaatstAd>("PUT", `ads/${existingAdId}`, mapping.payload)
         : await goedgeplaatstRequest<GoedgeplaatstAd>("POST", "ads/", mapping.payload);
