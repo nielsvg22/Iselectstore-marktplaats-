@@ -9,6 +9,23 @@ interface UpdateDescriptionBody {
   bodyHtml: string;
 }
 
+/** Read-only: fetch the current body_html before deciding what to replace it with. */
+export async function GET(req: NextRequest) {
+  const authError = checkAdminPassword(req);
+  if (authError) return authError;
+
+  const productId = req.nextUrl.searchParams.get("productId");
+  if (!productId) {
+    return NextResponse.json({ error: "productId query-parameter is verplicht." }, { status: 400 });
+  }
+  try {
+    const product = await getProduct(productId);
+    return NextResponse.json({ bodyHtml: product.body_html });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Onbekende fout." }, { status: 500 });
+  }
+}
+
 /**
  * One-off admin action: replace a Shopify product's description (body_html).
  * Needed to clean up the "Niet echt te koop" disclaimer on the test product
