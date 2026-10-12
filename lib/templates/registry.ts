@@ -46,6 +46,30 @@ const IPHONE_MODEL_OPTIONS = [
  */
 const IPHONE_COLOR_OPTIONS = ["Blauw", "Geel", "Goud", "Grijs", "Groen", "Paars", "Rood", "Roze", "Wit", "Zilver", "Zwart"];
 
+/**
+ * Dezelfde aanpak als iPhone's model/color hierboven, maar dan voor de
+ * overige Apple-categorieën — live opgehaald via POST /attributes/ voor de
+ * bijbehorende categoryId (zie lib/goedgeplaatst/categoryMap.ts), portal
+ * "marktplaats", 2026-10-12. Elke categorie heeft zijn EIGEN kleur-/model-
+ * enum bij GoedGeplaatst (bv. Apple Watch heeft wél "Oranje", iPhone niet)
+ * — nooit hergebruiken tussen categorieën. Een categorie zonder
+ * GoedGeplaatst-equivalent voor een veld (bv. geen "color" voor MacBook/
+ * Mac mini, geen modelattribuut voor Apple Watch) krijgt hier bewust geen
+ * dropdown — dat veld blijft vrije tekst, precies zoals
+ * lib/goedgeplaatst/attributeMap.ts dat al documenteert.
+ */
+const IPAD_MODEL_OPTIONS = ["iPad", "iPad Air", "iPad Mini", "iPad Pro 1", "Overige modellen"];
+const IPAD_COLOR_OPTIONS = ["Blauw", "goud", "Grijs", "Groen", "Rose Goud", "Wit", "zilver", "Zwart", "Overige kleuren"];
+const MACBOOK_MODEL_OPTIONS = ["MacBook", "MacBook Pro", "MacBook Air", "Overige modellen"];
+// categoryId 350 (Apple Desktops) is gedeeld tussen iMac en Mac mini — de
+// volledige live enum is ["iMac Pro","iMac","Mac Mini","Mac Pro","Powermac",
+// "Overige modellen"], hieronder bewust gesplitst per producttype (zelfde
+// scoping als de bestaande matchEnumSubstring-lijsten) zodat een iMac-
+// formulier geen "Mac Mini" als optie toont en andersom.
+const IMAC_MODEL_OPTIONS = ["iMac Pro", "iMac", "Overige modellen"];
+const MACMINI_MODEL_OPTIONS = ["Mac Mini", "Mac Pro", "Powermac", "Overige modellen"];
+const APPLE_WATCH_COLOR_OPTIONS = ["Blauw", "Geel", "Grijs", "Groen", "Oranje", "Paars", "Rood", "Roze", "Wit", "Zilver", "Zwart"];
+
 const iphone: ProductTemplate = {
   productType: "iPhone",
   fields: [
@@ -93,27 +117,27 @@ const iphone: ProductTemplate = {
 
 const ipad: ProductTemplate = {
   productType: "iPad",
-  fields: fields(
-    "model",
-    "generation",
-    "screen_size",
-    "storage_gb",
-    "color",
-    "wifi_cellular",
-    "sim_type",
-    "battery_percentage",
-    "condition",
-    "warranty_months",
-    "apple_pencil_support",
-    "accessories",
-    "box_included",
-    "cosmetic_notes",
-    "sell_price",
-    "new_price",
-    "subscription",
-    "simlock",
-    "manufacturer_name",
-  ),
+  fields: [
+    withOptions("model", IPAD_MODEL_OPTIONS),
+    ...fields("generation", "screen_size", "storage_gb"),
+    withOptions("color", IPAD_COLOR_OPTIONS),
+    ...fields(
+      "wifi_cellular",
+      "sim_type",
+      "battery_percentage",
+      "condition",
+      "warranty_months",
+      "apple_pencil_support",
+      "accessories",
+      "box_included",
+      "cosmetic_notes",
+      "sell_price",
+      "new_price",
+      "subscription",
+      "simlock",
+      "manufacturer_name",
+    ),
+  ],
   shopifyTitleFields: ["model", "storage_gb", "wifi_cellular"],
   shopifyFeatureFields: ["model", "screen_size", "storage_gb", "color", "wifi_cellular", "battery_percentage", "condition", "warranty_months", "apple_pencil_support"],
   marktplaatsTitleExtraFields: ["battery_percentage", "warranty_months"],
@@ -131,28 +155,30 @@ const ipad: ProductTemplate = {
 
 const macbook: ProductTemplate = {
   productType: "MacBook",
-  fields: fields(
-    "model",
-    "screen_size",
-    "model_year",
-    "chip",
-    "cpu_variant",
-    "gpu_variant",
-    "ram_gb",
-    "storage_gb",
-    "color",
-    "keyboard_layout",
-    "battery_percentage",
-    "cycle_count",
-    "condition",
-    "warranty_months",
-    "accessories",
-    "box_included",
-    "cosmetic_notes",
-    "sell_price",
-    "new_price",
-    "manufacturer_name",
-  ),
+  fields: [
+    withOptions("model", MACBOOK_MODEL_OPTIONS),
+    ...fields(
+      "screen_size",
+      "model_year",
+      "chip",
+      "cpu_variant",
+      "gpu_variant",
+      "ram_gb",
+      "storage_gb",
+      "color",
+      "keyboard_layout",
+      "battery_percentage",
+      "cycle_count",
+      "condition",
+      "warranty_months",
+      "accessories",
+      "box_included",
+      "cosmetic_notes",
+      "sell_price",
+      "new_price",
+      "manufacturer_name",
+    ),
+  ],
   shopifyTitleFields: ["model", "screen_size", "chip", "ram_gb", "storage_gb"],
   shopifyFeatureFields: ["model", "ram_gb", "storage_gb", "color", "chip", "battery_percentage", "condition", "warranty_months", "keyboard_layout", "cycle_count"],
   // Advertentietitel: "MacBook Air M1 256GB grijs / 88% batt / zeer net / garantie"
@@ -165,24 +191,26 @@ const macbook: ProductTemplate = {
 
 const imac: ProductTemplate = {
   productType: "iMac",
-  fields: fields(
-    "model",
-    "screen_size",
-    "model_year",
-    "chip",
-    "ram_gb",
-    "storage_gb",
-    "gpu_variant",
-    "color",
-    "keyboard_included",
-    "mouse_included",
-    "condition",
-    "warranty_months",
-    "cosmetic_notes",
-    "sell_price",
-    "new_price",
-    "manufacturer_name",
-  ),
+  fields: [
+    withOptions("model", IMAC_MODEL_OPTIONS),
+    ...fields(
+      "screen_size",
+      "model_year",
+      "chip",
+      "ram_gb",
+      "storage_gb",
+      "gpu_variant",
+      "color",
+      "keyboard_included",
+      "mouse_included",
+      "condition",
+      "warranty_months",
+      "cosmetic_notes",
+      "sell_price",
+      "new_price",
+      "manufacturer_name",
+    ),
+  ],
   shopifyTitleFields: ["model", "screen_size", "chip", "ram_gb", "storage_gb"],
   shopifyFeatureFields: ["model", "ram_gb", "storage_gb", "color", "chip", "condition", "warranty_months", "keyboard_included", "mouse_included"],
   marktplaatsTitleExtraFields: ["warranty_months"],
@@ -192,22 +220,24 @@ const imac: ProductTemplate = {
 
 const macmini: ProductTemplate = {
   productType: "Mac mini",
-  fields: fields(
-    "model",
-    "model_year",
-    "chip",
-    "cpu_variant",
-    "gpu_variant",
-    "ram_gb",
-    "storage_gb",
-    "condition",
-    "warranty_months",
-    "accessories",
-    "cosmetic_notes",
-    "sell_price",
-    "new_price",
-    "manufacturer_name",
-  ),
+  fields: [
+    withOptions("model", MACMINI_MODEL_OPTIONS),
+    ...fields(
+      "model_year",
+      "chip",
+      "cpu_variant",
+      "gpu_variant",
+      "ram_gb",
+      "storage_gb",
+      "condition",
+      "warranty_months",
+      "accessories",
+      "cosmetic_notes",
+      "sell_price",
+      "new_price",
+      "manufacturer_name",
+    ),
+  ],
   shopifyTitleFields: ["model", "chip", "ram_gb", "storage_gb"],
   shopifyFeatureFields: ["model", "ram_gb", "storage_gb", "chip", "condition", "warranty_months"],
   marktplaatsTitleExtraFields: ["warranty_months"],
@@ -217,24 +247,25 @@ const macmini: ProductTemplate = {
 
 const applewatch: ProductTemplate = {
   productType: "Apple Watch",
-  fields: fields(
-    "watch_series",
-    "watch_case_size",
-    "color",
-    "watch_material",
-    "watch_connectivity",
-    "watch_band",
-    "battery_percentage",
-    "condition",
-    "warranty_months",
-    "accessories",
-    "cosmetic_notes",
-    "sell_price",
-    "new_price",
-    "subscription",
-    "simlock",
-    "manufacturer_name",
-  ),
+  fields: [
+    ...fields("watch_series", "watch_case_size"),
+    withOptions("color", APPLE_WATCH_COLOR_OPTIONS),
+    ...fields(
+      "watch_material",
+      "watch_connectivity",
+      "watch_band",
+      "battery_percentage",
+      "condition",
+      "warranty_months",
+      "accessories",
+      "cosmetic_notes",
+      "sell_price",
+      "new_price",
+      "subscription",
+      "simlock",
+      "manufacturer_name",
+    ),
+  ],
   shopifyTitleFields: ["watch_series", "watch_case_size", "watch_connectivity"],
   shopifyFeatureFields: ["watch_series", "watch_case_size", "color", "watch_material", "watch_connectivity", "watch_band", "battery_percentage", "condition", "warranty_months"],
   marktplaatsTitleExtraFields: ["battery_percentage", "warranty_months"],
