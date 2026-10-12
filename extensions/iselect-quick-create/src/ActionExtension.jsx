@@ -1,6 +1,6 @@
 import "@shopify/ui-extensions/preact";
 import { render } from "preact";
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import { getTemplate, listProductTypes } from "../../../lib/templates/registry";
 import {
   validateQuickProductData,
@@ -93,12 +93,35 @@ function QuickCreateAction() {
   // aanmaken geüpload, want /api/shopify/quick-image heeft een bestaande
   // productId nodig.
   const [pendingFiles, setPendingFiles] = useState([]);
+  const [pendingThumbnails, setPendingThumbnails] = useState([]);
   const MAX_PENDING_FILES = 5;
 
-  function handlePendingFiles(fileList) {
-    const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
-    setPendingFiles((prev) => [...prev, ...files].slice(0, MAX_PENDING_FILES));
+  function fileIdentity(f) {
+    return `${f.name}:${f.size}:${f.lastModified}`;
   }
+
+  // s-drop-zone dispatches both an "input" and a "change" event for the
+  // same selection (zelfde patroon als elk ander veld in ProductForm.jsx,
+  // die altijd op beide luistert) — dedupe op bestandsidentiteit zodat dat
+  // nooit dubbele entries oplevert.
+  function handlePendingFiles(fileList) {
+    const incoming = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
+    setPendingFiles((prev) => {
+      const known = new Set(prev.map(fileIdentity));
+      const added = incoming.filter((f) => !known.has(fileIdentity(f)));
+      return added.length === 0 ? prev : [...prev, ...added].slice(0, MAX_PENDING_FILES);
+    });
+  }
+
+  // Directe previews zodra er foto's gekozen zijn — zichtbaar bewijs dat de
+  // dropzone de bestanden daadwerkelijk heeft opgepikt.
+  useEffect(() => {
+    const thumbs = pendingFiles.map((f) => ({ name: fileIdentity(f), url: URL.createObjectURL(f) }));
+    setPendingThumbnails(thumbs);
+    return () => {
+      thumbs.forEach((t) => URL.revokeObjectURL(t.url));
+    };
+  }, [pendingFiles]);
 
   async function fetchDraft(auto) {
     if (busy || result) return;
@@ -230,9 +253,15 @@ function QuickCreateAction() {
     }
   }
 
+  // state (imageState.busy) is async en kan voor zowel "input" als "change"
+  // nog de oude waarde teruggeven binnen dezelfde tick — een ref is
+  // synchroon en voorkomt dat dezelfde selectie dubbel geüpload wordt.
+  const uploadingRef = useRef(false);
+
   async function handleFiles(files) {
     if (!result || !files || files.length === 0) return;
-    if (imageState && imageState.busy) return;
+    if (uploadingRef.current) return;
+    uploadingRef.current = true;
     setImageState({ busy: true, message: "" });
     try {
       const token = await getIdToken();
@@ -259,6 +288,7 @@ function QuickCreateAction() {
       }
       setImageState({ busy: false, message });
     } finally {
+      uploadingRef.current = false;
       setImageState((prev) =>
         prev && prev.busy
           ? { busy: false, message: prev.message || "Upload afgebroken." }
@@ -329,8 +359,16 @@ function QuickCreateAction() {
                     accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
                     multiple
                     label="Sleep foto's hierheen of klik om te selecteren (max. 3 MB per bestand, max. 5 foto's)"
+                    onInput={(event) => handlePendingFiles(event.currentTarget.files)}
                     onChange={(event) => handlePendingFiles(event.currentTarget.files)}
                   />
+                  {pendingThumbnails.length > 0 ? (
+                    <s-stack direction="inline" gap="base">
+                      {pendingThumbnails.map((t) => (
+                        <s-thumbnail key={t.name} src={t.url} alt={t.name} size="base" />
+                      ))}
+                    </s-stack>
+                  ) : null}
                 </s-stack>
               </s-stack>
             }
@@ -348,6 +386,7 @@ function QuickCreateAction() {
               multiple
               disabled={Boolean(imageState && imageState.busy)}
               label="Sleep afbeeldingen hierheen of klik om te selecteren (max. 3 MB per bestand)"
+              onInput={(event) => handleFiles(event.currentTarget.files)}
               onChange={(event) => handleFiles(event.currentTarget.files)}
             />
           </s-stack>
