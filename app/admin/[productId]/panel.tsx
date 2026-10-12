@@ -302,9 +302,14 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAdPreview, setShowAdPreview] = useState(false);
+  // Still fetched — browserConfig.apiConfigured gates the "Publiceren via
+  // API" button below, which goes through the official Marktplaats API
+  // client (lib/marktplaats/apiPublisher.ts), NOT the Playwright bot. The
+  // Playwright/noVNC browser-test UI itself (button, live viewer, run
+  // polling) has been removed from this panel — that route is unused for
+  // now (see docker/entrypoint.sh / MARKTPLAATS_BROWSER_TEST=false); the
+  // backend code is untouched, just not driven from here anymore.
   const [browserConfig, setBrowserConfig] = useState<BrowserTestConfig | null>(null);
-  const [browserRunId, setBrowserRunId] = useState<string | null>(null);
-  const [browserRun, setBrowserRun] = useState<BrowserTestRun | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,34 +323,6 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!browserRunId) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const poll = async () => {
-      if (cancelled) return;
-      try {
-        const res = await fetch(`/api/marktplaats/browser-test?runId=${browserRunId}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (cancelled) return;
-          setBrowserRun(data.run);
-          if (!data.active) return;
-        }
-      } catch {
-        /* keep polling while the run is active */
-      }
-      timer = setTimeout(poll, 1500);
-    };
-
-    poll();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [browserRunId]);
 
   async function call(url: string, key: string) {
     setLoading(key);
@@ -397,40 +374,6 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
     if (data) setPublishResult(data.result);
   }
 
-  async function browserTest() {
-    setBrowserRun(null);
-    setBrowserRunId(null);
-    const data = await call("/api/marktplaats/browser-test", "browsertest");
-    if (data?.runId) setBrowserRunId(data.runId);
-  }
-
-  const browserRunActive = Boolean(
-    browserRun &&
-      (browserRun.state === "queued" ||
-        browserRun.state === "running" ||
-        browserRun.state === "waiting_login" ||
-        browserRun.state === "waiting_code" ||
-        browserRun.state === "verifying_code" ||
-        browserRun.state === "authenticated")
-  );
-
-  async function stopBrowserTest() {
-    if (!browserRun) return;
-    setLoading("stopbrowsertest");
-    try {
-      await fetch("/api/marktplaats/browser-test/stop", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runId: browserRun.runId }),
-      });
-      // Polling (already running for this runId) picks up the resulting state.
-    } catch {
-      /* the next poll reflects whatever actually happened */
-    } finally {
-      setLoading(null);
-    }
-  }
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {productType && <AIRecognitionPanel shopifyProductId={shopifyProductId} productType={productType} />}
@@ -445,28 +388,6 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
         <button onClick={showAdPreviewCard} disabled={loading !== null} style={btnStyle()}>
           {loading === "adpreview" ? "Bezig…" : "Voorbeeld advertentie"}
         </button>
-        <button
-          onClick={browserTest}
-          disabled={loading !== null || browserConfig?.enabled === false}
-          title={
-            browserConfig?.enabled === false
-              ? "Zet MARKTPLAATS_BROWSER_TEST=true in .env.local om deze test te activeren."
-              : "Opent het echte Marktplaats-formulier en vult de Shopify-gegevens in."
-          }
-          style={btnStyle()}
-        >
-          {loading === "browsertest" ? "Bezig…" : "Test op Marktplaats"}
-        </button>
-        {browserRunActive && (
-          <button
-            onClick={stopBrowserTest}
-            disabled={loading !== null && loading !== "stopbrowsertest"}
-            title="Stopt deze testrun en sluit zijn tabblad — geen herdeploy nodig. Andere lopende tests (andere producten) blijven gewoon draaien."
-            style={{ ...btnStyle(), borderColor: "#dc2626", color: "#dc2626" }}
-          >
-            {loading === "stopbrowsertest" ? "Bezig…" : "Stop test"}
-          </button>
-        )}
         <button onClick={fullApiTest} disabled={loading !== null} style={btnStyle()}>
           {loading === "fulltest" ? "Bezig…" : "Volledige Marktplaats API-test"}
         </button>
@@ -480,17 +401,7 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
         </button>
       </div>
 
-      <div style={{ fontSize: 13, color: "#6b7280", marginTop: -6 }}>
-        <b>Test op Marktplaats</b> opent het echte Marktplaats-formulier en vult gegevens automatisch in.{" "}
-        {browserConfig?.allowSubmit
-          ? "De testadvertentie wordt hierna geplaatst (MARKTPLAATS_BROWSER_ALLOW_SUBMIT=true) — verwijder die na afloop zelf uit Mijn Advertenties."
-          : `De advertentie wordt niet automatisch geplaatst${browserConfig ? " (MARKTPLAATS_BROWSER_ALLOW_SUBMIT=false)" : ""}.`}
-        {browserConfig?.enabled === false && " Test staat uit — zet MARKTPLAATS_BROWSER_TEST=true in .env.local."}
-      </div>
-
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 8, padding: 12, color: "#991b1b" }}>{error}</div>}
-
-      {browserRun && <BrowserTestStatusCard run={browserRun} novncUrl={browserConfig?.novncUrl ?? null} />}
 
       {preview && showAdPreview && <MarktplaatsAdPreview preview={preview} />}
 
