@@ -296,16 +296,16 @@ function QuickCreateAction() {
         ) : null}
 
         {result ? null : (
-          <s-stack direction="block" gap="base">
-            <ProductForm
-              productType={productType}
-              onProductTypeChange={handleProductTypeChange}
-              status={status}
-              onStatusChange={setStatus}
-              values={values}
-              issues={issues}
-              onChange={handleValueChange}
-              aiShortcut={
+          <ProductForm
+            productType={productType}
+            onProductTypeChange={handleProductTypeChange}
+            status={status}
+            onStatusChange={setStatus}
+            values={values}
+            issues={issues}
+            onChange={handleValueChange}
+            aiShortcut={
+              <s-stack direction="block" gap="base">
                 <s-stack direction="inline" gap="base" alignItems="center">
                   <s-link
                     href={`${BACKEND_URL}/admin/quick-create?productType=${encodeURIComponent(productType)}&draftId=${draftId}`}
@@ -318,23 +318,23 @@ function QuickCreateAction() {
                   </s-button>
                   {draftStatus ? <s-text tone="subdued">{draftStatus}</s-text> : null}
                 </s-stack>
-              }
-            />
-            <s-stack direction="block" gap="base">
-              <s-text type="strong">Foto's (optioneel)</s-text>
-              {pendingFiles.length > 0 ? (
-                <s-text tone="subdued">
-                  {pendingFiles.length} foto{pendingFiles.length === 1 ? "" : "'s"} geselecteerd — worden na het aanmaken geüpload.
-                </s-text>
-              ) : null}
-              <s-drop-zone
-                accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
-                multiple
-                label="Sleep foto's hierheen of klik om te selecteren (max. 3 MB per bestand, max. 5 foto's)"
-                onChange={(event) => handlePendingFiles(event.currentTarget.files)}
-              />
-            </s-stack>
-          </s-stack>
+                <s-stack direction="block" gap="base">
+                  <s-text type="strong">Foto's (optioneel)</s-text>
+                  {pendingFiles.length > 0 ? (
+                    <s-text tone="subdued">
+                      {pendingFiles.length} foto{pendingFiles.length === 1 ? "" : "'s"} geselecteerd — worden na het aanmaken geüpload.
+                    </s-text>
+                  ) : null}
+                  <s-drop-zone
+                    accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
+                    multiple
+                    label="Sleep foto's hierheen of klik om te selecteren (max. 3 MB per bestand, max. 5 foto's)"
+                    onChange={(event) => handlePendingFiles(event.currentTarget.files)}
+                  />
+                </s-stack>
+              </s-stack>
+            }
+          />
         )}
 
         {result ? (
