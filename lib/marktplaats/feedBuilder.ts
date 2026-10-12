@@ -57,7 +57,14 @@ const CONDITION_MAP: Record<string, "new" | "refurbished" | "used"> = {
  * strings verbatim, so send only "Zo goed als nieuw" (still like new) or
  * "Gebruikt" (used, same object offered on either side of that split).
  */
-const CONDITION_ATTRIBUTE_MAP: Record<string, string> = {
+// Exported: lib/goedgeplaatst/mapper.ts needs the exact same condition/
+// storage value conversion — GoedGeplaatst's own live /attributes/ response
+// for categoryId 1737 confirmed the identical "condition" enum
+// (["Nieuw","Refurbished","Zo goed als nieuw","Gebruikt","Niet werkend"])
+// and unit-suffixed "storage" values ("256 GB", "1 TB"), so this is one
+// shared vocabulary, not two that happen to coincide — reuse, don't
+// reimplement.
+export const CONDITION_ATTRIBUTE_MAP: Record<string, string> = {
   "Als nieuw": "Zo goed als nieuw",
   "Zeer nette staat": "Zo goed als nieuw",
   "Nette staat": "Gebruikt",
@@ -69,7 +76,7 @@ const CONDITION_ATTRIBUTE_MAP: Record<string, string> = {
  * verified against category 1953's live attributeGroups), but
  * FIELD_LIBRARY.storage_gb (lib/templates/types.ts) stores a bare number.
  */
-function formatStorageValue(rawGb: string): string {
+export function formatStorageValue(rawGb: string): string {
   const gb = Number(rawGb);
   if (!Number.isFinite(gb) || gb <= 0) return rawGb;
   return gb >= 1024 && gb % 1024 === 0 ? `${gb / 1024} TB` : `${gb} GB`;

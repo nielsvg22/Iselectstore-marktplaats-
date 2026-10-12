@@ -5,6 +5,7 @@
 // same job for the official Marktplaats API client.
 
 import { ProductPreview } from "../marktplaats/orchestrator";
+import { CONDITION_ATTRIBUTE_MAP, formatStorageValue } from "../marktplaats/feedBuilder";
 import { GPSR_MANUFACTURER_ATTRIBUTE_KEYS, GoedgeplaatstAttributeDefinition, GoedgeplaatstCreateAdInput } from "./types";
 import { assertConceptStatusOnly, ManufacturerInfo } from "./config";
 
@@ -65,7 +66,19 @@ function resolveAttributes(
         source = "manufacturer-config";
       }
     } else if (shopifyValues[attr.key] !== undefined && shopifyValues[attr.key] !== "") {
-      value = shopifyValues[attr.key];
+      const raw = shopifyValues[attr.key];
+      // GoedGeplaatst's "condition"/"storage" enums are byte-for-byte the
+      // same vocabulary as Marktplaats' own (confirmed live, see
+      // feedBuilder.ts) — our internal 4-tier Dutch condition string and
+      // bare-number storage value need the same conversion applied there,
+      // or GoedGeplaatst rejects/mismatches the value.
+      if (attr.key === "condition" && typeof raw === "string") {
+        value = CONDITION_ATTRIBUTE_MAP[raw] ?? raw;
+      } else if (attr.key === "storage" && typeof raw === "string") {
+        value = formatStorageValue(raw);
+      } else {
+        value = raw;
+      }
       source = "shopify";
     }
 

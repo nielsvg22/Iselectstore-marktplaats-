@@ -33,13 +33,19 @@ const iphone: ProductTemplate = {
   marktplaatsTitleExtraFields: ["battery_percentage", "warranty_months"],
   marktplaatsDescriptionFields: ["battery_percentage", "warranty_months", "condition", "sim_type", "cosmetic_notes", "accessories", "box_included"],
   // Order matches the real Marktplaats "Telefoons | Apple" listing layout:
-  // Conditie, Opslagcapaciteit, Abonnement, Simlock, Batterijconditie,
-  // Kleur, Handelsnaam fabrikant (EU GPSR field).
+  // Conditie, Opslagcapaciteit, Abonnement, Simlock, Model, Batterijconditie,
+  // Kleur, Handelsnaam fabrikant (EU GPSR field). "model" -> the real
+  // discovered attribute key is "type" (marktplaats_attribute_mapping,
+  // categoryId 225 — confirmed live against GoedGeplaatst's own /attributes/
+  // for categoryId 1737 too, same key name "type"), was previously missing
+  // here so the iPhone's model (e.g. "iPhone 15 Pro") never reached either
+  // Marktplaats or GoedGeplaatst despite Shopify always having it.
   marktplaatsAttributes: [
     "condition",
     "storage_gb",
     "subscription",
     "simlock",
+    "model",
     "battery_percentage",
     "color",
     "manufacturer_name",
