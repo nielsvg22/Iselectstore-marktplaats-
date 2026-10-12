@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AIRecognitionPanel } from "../AIRecognitionPanel";
+import { GOEDGEPLAATST_CATEGORY_MAP } from "@/lib/goedgeplaatst/categoryMap";
 
 type CheckStatus = "ok" | "warning" | "error";
 
@@ -135,9 +136,10 @@ interface GoedgeplaatstCreateResult {
  * description/price/images komen uit orchestrator.buildProductPreview) in
  * plaats van een eigen Shopify-ophaal-laag.
  */
-function GoedgeplaatstSection({ shopifyProductId }: { shopifyProductId: string }) {
+function GoedgeplaatstSection({ shopifyProductId, productType }: { shopifyProductId: string; productType: string }) {
   const [categories, setCategories] = useState<{ groups: { categories: { categoryId: number; descriptions: { description: string }[] }[] }[]; mock: boolean } | null>(null);
   const [categoryId, setCategoryId] = useState<number | "">("");
+  const [categoryAutoPicked, setCategoryAutoPicked] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,13 +149,28 @@ function GoedgeplaatstSection({ shopifyProductId }: { shopifyProductId: string }
   useEffect(() => {
     fetch("/api/goedgeplaatst/categories")
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => data && setCategories(data))
+      .then((data) => {
+        if (!data) return;
+        setCategories(data);
+        // Pre-select the category for this Shopify product's type (see
+        // lib/goedgeplaatst/categoryMap.ts) so this is a one-click action
+        // instead of a manual dropdown pick every time — only when the
+        // mapped id is actually present in the live/mock category list.
+        const mapped = GOEDGEPLAATST_CATEGORY_MAP[productType];
+        if (mapped !== undefined) {
+          const exists = (data.groups ?? []).some((g: { categories: { categoryId: number }[] }) => g.categories.some((c) => c.categoryId === mapped));
+          if (exists) {
+            setCategoryId(mapped);
+            setCategoryAutoPicked(true);
+          }
+        }
+      })
       .catch(() => {});
     fetch(`/api/goedgeplaatst/link?shopifyProductId=${encodeURIComponent(shopifyProductId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => data && setLink(data.link))
       .catch(() => {});
-  }, [shopifyProductId]);
+  }, [shopifyProductId, productType]);
 
   const options: GoedgeplaatstCategoryOption[] = (categories?.groups ?? []).flatMap((g) =>
     g.categories.map((c) => ({ categoryId: c.categoryId, label: c.descriptions?.[0]?.description ?? String(c.categoryId) }))
@@ -201,16 +218,28 @@ function GoedgeplaatstSection({ shopifyProductId }: { shopifyProductId: string }
         </div>
       ) : (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-          <select value={categoryId} onChange={(e) => setCategoryId(Number(e.target.value))} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}>
-            <option value="" disabled>
-              Kies GoedGeplaatst-categorie…
-            </option>
-            {options.map((o) => (
-              <option key={o.categoryId} value={o.categoryId}>
-                {o.label}
+          <div>
+            <select
+              value={categoryId}
+              onChange={(e) => {
+                setCategoryId(Number(e.target.value));
+                setCategoryAutoPicked(false);
+              }}
+              style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
+            >
+              <option value="" disabled>
+                Kies GoedGeplaatst-categorie…
               </option>
-            ))}
-          </select>
+              {options.map((o) => (
+                <option key={o.categoryId} value={o.categoryId}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            {categoryAutoPicked && (
+              <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2 }}>✓ Automatisch gekozen op basis van producttype &quot;{productType}&quot; — kan handmatig gewijzigd worden.</div>
+            )}
+          </div>
           <input
             type="password"
             placeholder="Admin-wachtwoord"
@@ -506,7 +535,7 @@ export function MarktplaatsPanel({ shopifyProductId, productType }: { shopifyPro
         </div>
       )}
 
-      <GoedgeplaatstSection shopifyProductId={shopifyProductId} />
+      <GoedgeplaatstSection shopifyProductId={shopifyProductId} productType={productType} />
     </div>
   );
 }
