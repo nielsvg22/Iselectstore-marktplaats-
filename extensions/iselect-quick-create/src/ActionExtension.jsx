@@ -114,12 +114,29 @@ function QuickCreateAction() {
   }
 
   // Directe previews zodra er foto's gekozen zijn — zichtbaar bewijs dat de
-  // dropzone de bestanden daadwerkelijk heeft opgepikt.
+  // dropzone de bestanden daadwerkelijk heeft opgepikt. URL.createObjectURL
+  // blob:-URL's zijn alleen geldig binnen de realm die ze aanmaakte — de
+  // UI-extensie draait in een gesandboxte context los van het host-frame
+  // dat de thumbnail daadwerkelijk rendert, dus die blob:-URL's kwamen
+  // leeg binnen (live bevestigd). Een data:-URL is gewoon een string en
+  // werkt wél over die grens heen.
   useEffect(() => {
-    const thumbs = pendingFiles.map((f) => ({ name: fileIdentity(f), url: URL.createObjectURL(f) }));
-    setPendingThumbnails(thumbs);
+    let cancelled = false;
+    Promise.all(
+      pendingFiles.map(
+        (f) =>
+          new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve({ name: fileIdentity(f), url: reader.result });
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(f);
+          })
+      )
+    ).then((thumbs) => {
+      if (!cancelled) setPendingThumbnails(thumbs.filter(Boolean));
+    });
     return () => {
-      thumbs.forEach((t) => URL.revokeObjectURL(t.url));
+      cancelled = true;
     };
   }, [pendingFiles]);
 
