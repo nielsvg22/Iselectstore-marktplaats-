@@ -111,7 +111,7 @@ export async function listCategories(): Promise<CategoriesResult> {
   if (isGoedgeplaatstMockMode()) {
     return { mock: true, groups: MOCK_CATEGORY_GROUPS };
   }
-  const body: Record<string, unknown> = { locale: "nl_NL" };
+  const body: Record<string, unknown> = { locale: ["nl_NL"] };
   if (config.userId) body.userId = config.userId;
   const groups = await goedgeplaatstRequest<GoedgeplaatstCategoryGroup[]>("POST", "categories/", body);
   return { mock: false, groups };
@@ -127,7 +127,7 @@ export async function listAttributesForCategory(categoryId: number): Promise<Att
   if (isGoedgeplaatstMockMode()) {
     return { mock: true, categoryAttributes: getMockCategoryAttributes(categoryId) };
   }
-  const body: Record<string, unknown> = { categoryId: [categoryId], locale: "nl_NL" };
+  const body: Record<string, unknown> = { categoryId: [categoryId], locale: ["nl_NL"] };
   if (config.userId) body.userId = config.userId;
   const data = await goedgeplaatstRequest<GoedgeplaatstCategoryAttributes[]>("POST", "attributes/", body);
   const categoryAttributes = data[0] ?? { categoryId, attributes: [] };
