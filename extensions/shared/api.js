@@ -71,39 +71,44 @@ export async function callBackend(path, { method = "POST", token, body } = {}) {
   return { ok: true, status: response.status, data: payload };
 }
 
-export function readFileBase64(file) {
-  return file.arrayBuffer().then((buffer) => {
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode.apply(
-        null,
-        bytes.subarray(i, i + chunk)
-      );
-    }
-    return btoa(binary);
-  });
+// De admin-extensie draait in een gesandboxte context waar File.arrayBuffer()
+// onbetrouwbaar is (live bevestigd: "Kon <bestand> niet lezen") — exact
+// zoals Shopify's eigen DropZone-voorbeeld het File-object dan ook nooit
+// zelf uitleest, maar altijd rechtstreeks via FormData + fetch verstuurt.
+// Dit doet hetzelfde: de backend leest de bytes server-side.
+async function uploadImageFile({ token, productId, file }) {
+  let response;
+  try {
+    const form = new FormData();
+    form.append("productId", productId);
+    form.append("file", file, file.name || "image.jpg");
+    response = await fetch(`${BACKEND_URL}/api/shopify/quick-image`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form,
+      signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout
+        ? AbortSignal.timeout(20000)
+        : undefined,
+    });
+  } catch (err) {
+    return { ok: false, error: `Kon ${file.name || "bestand"} niet uploaden.` };
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    payload = null;
+  }
+  if (!response.ok) {
+    return { ok: false, error: (payload && payload.error) || `Upload mislukt (HTTP ${response.status}).` };
+  }
+  return { ok: true };
 }
 
 export async function uploadImages({ token, productId, files }) {
   const result = { added: 0, error: "" };
   for (const file of Array.from(files || [])) {
-    let data;
-    try {
-      data = await readFileBase64(file);
-    } catch (err) {
-      result.error = `Kon ${file.name || "bestand"} niet lezen.`;
-      break;
-    }
-    const res = await callBackend("/api/shopify/quick-image", {
-      token,
-      body: {
-        productId,
-        filename: file.name || "image.jpg",
-        data,
-      },
-    });
+    const res = await uploadImageFile({ token, productId, file });
     if (!res.ok) {
       result.error = res.error;
       break;
