@@ -312,3 +312,93 @@ export async function setThemeAssetContent(themeId: number, key: string, value: 
     body: JSON.stringify({ asset: { key, value } }),
   });
 }
+
+/** Raw GraphQL Admin API call — used for things the REST API doesn't cover (e.g. shop Files, used by image_picker theme settings). */
+async function shopifyGraphQL<T = any>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  const { domain, token, version } = await config();
+  const res = await fetch(`https://${domain}/admin/api/${version}/graphql.json`, {
+    method: "POST",
+    headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Shopify GraphQL ${res.status}: ${body}`);
+  }
+  const json = (await res.json()) as { data?: T; errors?: unknown[] };
+  if (json.errors && json.errors.length > 0) {
+    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
+  }
+  return json.data as T;
+}
+
+/**
+ * Uploads an image into the shop's Files library (Content → Files), the
+ * source image_picker theme settings pick from. Staged-upload flow:
+ * 1) ask Shopify for a signed upload URL, 2) PUT the bytes there,
+ * 3) register the uploaded file as a MediaImage, 4) poll until Shopify
+ * finishes processing it so we can return its final CDN url and the
+ * "shopify://shop_images/<filename>" reference theme settings expect.
+ */
+export async function uploadShopImage(buffer: Buffer, filename: string, mimeType: string): Promise<{ id: string; url: string; shopifyReference: string }> {
+  const staged = await shopifyGraphQL<{
+    stagedUploadsCreate: { stagedTargets: { url: string; resourceUrl: string; parameters: { name: string; value: string }[] }[]; userErrors: { message: string }[] };
+  }>(
+    `mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets { url resourceUrl parameters { name value } }
+        userErrors { message }
+      }
+    }`,
+    { input: [{ resource: "IMAGE", filename, mimeType, fileSize: String(buffer.length), httpMethod: "POST" }] }
+  );
+  if (staged.stagedUploadsCreate.userErrors.length > 0) {
+    throw new Error(`stagedUploadsCreate: ${JSON.stringify(staged.stagedUploadsCreate.userErrors)}`);
+  }
+  const target = staged.stagedUploadsCreate.stagedTargets[0];
+
+  const form = new FormData();
+  for (const p of target.parameters) form.append(p.name, p.value);
+  form.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename);
+  const uploadRes = await fetch(target.url, { method: "POST", body: form });
+  if (!uploadRes.ok) {
+    throw new Error(`Staged upload PUT failed (${uploadRes.status}): ${await uploadRes.text()}`);
+  }
+
+  const created = await shopifyGraphQL<{
+    fileCreate: { files: { id: string; fileStatus: string; alt: string | null; preview?: { image?: { url: string } } }[]; userErrors: { message: string }[] };
+  }>(
+    `mutation fileCreate($files: [FileCreateInput!]!) {
+      fileCreate(files: $files) {
+        files { id fileStatus alt preview { image { url } } }
+        userErrors { message }
+      }
+    }`,
+    { files: [{ originalSource: target.resourceUrl, contentType: "IMAGE", alt: filename }] }
+  );
+  if (created.fileCreate.userErrors.length > 0) {
+    throw new Error(`fileCreate: ${JSON.stringify(created.fileCreate.userErrors)}`);
+  }
+  const fileId = created.fileCreate.files[0].id;
+
+  // Files process async — poll until Shopify finishes and gives us the final CDN url.
+  let finalUrl: string | undefined;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const check = await shopifyGraphQL<{ node: { id: string; fileStatus: string; preview?: { image?: { url: string } } } | null }>(
+      `query checkFile($id: ID!) { node(id: $id) { ... on MediaImage { id fileStatus preview { image { url } } } } }`,
+      { id: fileId }
+    );
+    const status = check.node?.fileStatus;
+    const url = check.node?.preview?.image?.url;
+    if (status === "READY" && url) {
+      finalUrl = url;
+      break;
+    }
+    if (status === "FAILED") throw new Error(`Shopify kon de afbeelding niet verwerken (fileStatus FAILED): ${filename}`);
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  if (!finalUrl) throw new Error(`Afbeelding ${filename} was na 10 pogingen nog niet "READY" bij Shopify.`);
+
+  return { id: fileId, url: finalUrl, shopifyReference: `shopify://shop_images/${filename}` };
+}
