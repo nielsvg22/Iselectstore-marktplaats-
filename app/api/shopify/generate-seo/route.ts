@@ -78,6 +78,8 @@ export async function POST(req: NextRequest) {
       const seoDescription = buildSeoDescription(product.title, fields, price);
       await setProductSeo(String(product.id), seoTitle, seoDescription);
       results.push({ id: product.id, title: product.title, action: "updated" });
+      // Shopify Admin API allows ~2 req/s; getCustomFields + setProductSeo is 2 calls per product.
+      await new Promise((r) => setTimeout(r, 1100));
     }
 
     const summary = {
