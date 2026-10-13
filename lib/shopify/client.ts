@@ -56,6 +56,10 @@ export interface ShopifyProduct {
   tags?: string;
   images: ShopifyImage[];
   variants: ShopifyVariant[];
+  /** "Page title" in Admin → product → SEO. Blank/null means Shopify falls back to the product title. */
+  metafields_global_title_tag?: string | null;
+  /** "Meta description" in Admin → product → SEO. Blank/null means Shopify falls back to a truncated body_html. */
+  metafields_global_description_tag?: string | null;
 }
 
 async function config() {
@@ -173,6 +177,30 @@ export async function getProductMetafields(productId: string): Promise<ShopifyMe
 export async function getAllProductMetafields(productId: string): Promise<ShopifyMetafield[]> {
   const data = await shopifyFetch(`/products/${productId}/metafields.json?limit=250`);
   return data.metafields as ShopifyMetafield[];
+}
+
+/** Returns the storefront-facing `custom` namespace fields (condition, battery_percentage, warranty_months, …) the theme reads — as a flat key/value map. */
+export async function getCustomFields(productId: string): Promise<Record<string, string>> {
+  const data = await shopifyFetch(`/products/${productId}/metafields.json?limit=250&namespace=custom`);
+  const out: Record<string, string> = {};
+  for (const m of data.metafields as ShopifyMetafield[]) {
+    out[m.key] = String(m.value);
+  }
+  return out;
+}
+
+/** Sets a product's "Page title" / "Meta description" SEO fields (Admin → product → Search engine listing). */
+export async function setProductSeo(productId: string, seoTitle: string, seoDescription: string): Promise<void> {
+  await shopifyFetch(`/products/${productId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({
+      product: {
+        id: Number(productId),
+        metafields_global_title_tag: seoTitle,
+        metafields_global_description_tag: seoDescription,
+      },
+    }),
+  });
 }
 
 /** Returns the structured fields (app-reserved `mkt` namespace) as a flat key/value map. */
