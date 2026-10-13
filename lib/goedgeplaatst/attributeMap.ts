@@ -117,9 +117,12 @@ export const GOEDGEPLAATST_ATTRIBUTE_MAP: Record<string, Record<string, Attribut
     },
     capacity: { shopifyField: "storage_gb", transform: formatIpadCapacity },
     color: { shopifyField: "color" },
-    // screenSize: geen betrouwbare conversie van vrije tekst (bv. "11\"",
-    // "11 inch", "11.0") naar de exacte "11 inch"-enum zonder gokken —
-    // bewust ongemapt gelaten.
+    // screenSize was eerder ongemapt (vrije tekst gaf geen garantie op een
+    // exacte enum-match) — nu dat screen_size in het formulier zelf een
+    // dropdown is (lib/templates/registry.ts, IPAD_SCREEN_SIZE_OPTIONS,
+    // dezelfde live-opgehaalde "7 inch".."13 inch"-lijst), is de ruwe
+    // waarde altijd al exact geldig.
+    screenSize: { shopifyField: "screen_size" },
   },
   MacBook: {
     condition: { shopifyField: "condition", transform: conditionTransform },
@@ -127,12 +130,15 @@ export const GOEDGEPLAATST_ATTRIBUTE_MAP: Record<string, Record<string, Attribut
     harddisk: { shopifyField: "storage_gb", transform: bucketHarddisk },
     memoryRAM: { shopifyField: "ram_gb", transform: bucketRam },
     keyboardtype: { shopifyField: "keyboard_layout", transform: (raw) => matchEnumSubstring(raw, ["Qwerty", "Azerty"]) },
+    // screenSize was eerder ongemapt — nu een dropdown in het formulier
+    // (MACBOOK_SCREEN_SIZE_OPTIONS, live-opgehaalde "11 inch".."17 inch" +
+    // "Overige groottes"), dus de ruwe waarde is altijd al exact geldig.
+    screenSize: { shopifyField: "screen_size" },
     // GEEN "color"-attribuut voor deze categorie bij GoedGeplaatst (live
     // bevestigd — eerder per ongeluk toegevoegd, een live testcall wees dit
     // uit: "unknown key/value pair for field: ... color"). Niet toevoegen.
-    // screenSize, processorSpeed: geen betrouwbare Shopify-bron (chip-naam
-    // is geen GHz-getal; screen_size is vrije tekst zonder garantie op
-    // exacte enum-match) — ongemapt.
+    // processorSpeed: geen betrouwbare Shopify-bron (chip-naam is geen
+    // GHz-getal) — ongemapt.
   },
   iMac: {
     condition: { shopifyField: "condition", transform: conditionTransform },

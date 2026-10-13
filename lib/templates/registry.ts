@@ -70,6 +70,16 @@ const IMAC_MODEL_OPTIONS = ["iMac Pro", "iMac", "Overige modellen"];
 const MACMINI_MODEL_OPTIONS = ["Mac Mini", "Mac Pro", "Powermac", "Overige modellen"];
 const APPLE_WATCH_COLOR_OPTIONS = ["Blauw", "Geel", "Grijs", "Groen", "Oranje", "Paars", "Rood", "Roze", "Wit", "Zilver", "Zwart"];
 
+/**
+ * "Schermformaat" was eerder bewust ongemapt gelaten bij GoedGeplaatst
+ * (lib/goedgeplaatst/attributeMap.ts) omdat vrije tekst ("11\"", "11 inch",
+ * "11.0") geen betrouwbare exacte match garandeert. Met een dropdown is dat
+ * niet langer een probleem — live opgehaald (zelfde moment/portal als
+ * hierboven) en nu ook daadwerkelijk gemapt, zie attributeMap.ts.
+ */
+const IPAD_SCREEN_SIZE_OPTIONS = ["7 inch", "8 inch", "9 inch", "10 inch", "11 inch", "12 inch", "13 inch"];
+const MACBOOK_SCREEN_SIZE_OPTIONS = ["11 inch", "12 inch", "13 inch", "15 inch", "16 inch", "17 inch", "Overige groottes"];
+
 const iphone: ProductTemplate = {
   productType: "iPhone",
   fields: [
@@ -119,7 +129,9 @@ const ipad: ProductTemplate = {
   productType: "iPad",
   fields: [
     withOptions("model", IPAD_MODEL_OPTIONS),
-    ...fields("generation", "screen_size", "storage_gb"),
+    ...fields("generation"),
+    withOptions("screen_size", IPAD_SCREEN_SIZE_OPTIONS),
+    ...fields("storage_gb"),
     withOptions("color", IPAD_COLOR_OPTIONS),
     ...fields(
       "wifi_cellular",
@@ -157,8 +169,8 @@ const macbook: ProductTemplate = {
   productType: "MacBook",
   fields: [
     withOptions("model", MACBOOK_MODEL_OPTIONS),
+    withOptions("screen_size", MACBOOK_SCREEN_SIZE_OPTIONS),
     ...fields(
-      "screen_size",
       "model_year",
       "chip",
       "cpu_variant",
