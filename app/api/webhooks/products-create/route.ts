@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyShopifyWebhookHmac } from "@/lib/soldImage/webhookAuth";
-import { getProduct, hasPositiveInventory } from "@/lib/shopify/client";
+import { getProduct, hasPositiveInventory, getCustomFields, setProductSeo } from "@/lib/shopify/client";
+import { buildSeoTitle, buildSeoDescription } from "@/lib/shopify/seo";
 import { logSync } from "@/lib/logging";
 import { updateLifecycleState } from "@/services/catalog/lifecycleService";
 import { checkProductObjectAndNotify } from "@/services/inventory/notificationService";
@@ -26,6 +27,18 @@ export async function POST(req: NextRequest) {
 
   const productId = String(payload.id);
   const product = await getProduct(productId);
+
+  if (!product.metafields_global_title_tag || !product.metafields_global_description_tag) {
+    const price = product.variants?.[0]?.price;
+    if (price) {
+      await getCustomFields(productId)
+        .then((fields) => setProductSeo(productId, buildSeoTitle(product.title), buildSeoDescription(product.title, fields, price)))
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logSync({ shopifyProductId: productId, action: "seo_generate_error", message }).catch(() => {});
+        });
+    }
+  }
 
   await updateLifecycleState(product).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
