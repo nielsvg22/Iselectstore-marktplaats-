@@ -103,6 +103,17 @@ function resolveAttributes(
 }
 
 /**
+ * "delivery" has the SAME three-option enum (live-verified: "Ophalen of
+ * Verzenden" / "Ophalen" / "Verzenden") on every category this feature
+ * supports — there's no Shopify field this could come from, so it was
+ * always left for the operator to fill in by hand and ended up "missing"
+ * on nearly every concept. Default to the broadest, safest option so it's
+ * always sent unless the operator explicitly picks something narrower via
+ * the portal's own delivery field (applyManualOverrides below still wins).
+ */
+const DEFAULT_DELIVERY = "Ophalen of Verzenden";
+
+/**
  * Merges the portal's manual invulvelden (delivery/ean) into the
  * shopify-derived attribute values, WITHOUT overwriting a real Shopify
  * value that is already present (ean: Shopify's barcode always wins when
@@ -118,6 +129,9 @@ function applyManualOverrides(
   const manualKeys = new Set<string>();
   if (overrides?.delivery && overrides.delivery.trim().length > 0) {
     values.delivery = overrides.delivery.trim();
+    manualKeys.add("delivery");
+  } else {
+    values.delivery = DEFAULT_DELIVERY;
     manualKeys.add("delivery");
   }
   if (overrides?.ean && overrides.ean.trim().length > 0 && (values.ean === undefined || values.ean === "")) {
