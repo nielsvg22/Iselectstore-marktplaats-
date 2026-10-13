@@ -252,3 +252,30 @@ export async function setImagePosition(productId: string, imageId: number, posit
 export async function deleteProductImage(productId: string, imageId: number): Promise<void> {
   await shopifyFetch(`/products/${productId}/images/${imageId}.json`, { method: "DELETE" });
 }
+
+export interface ShopifyPage {
+  id: number;
+  title: string;
+  handle: string;
+  template_suffix: string | null;
+}
+
+/** Looks up a Shopify page (Online winkel → Pagina's) by its exact handle. Returns null if none exists. */
+export async function getPageByHandle(handle: string): Promise<ShopifyPage | null> {
+  const data = await shopifyFetch(`/pages.json?handle=${encodeURIComponent(handle)}`);
+  const pages = (data.pages as ShopifyPage[]) || [];
+  return pages[0] ?? null;
+}
+
+/**
+ * Sets which theme template a page renders with (the "Thema-template" dropdown
+ * in the page editor). `templateSuffix` is the template filename without the
+ * "page." prefix/".json" suffix — e.g. "ons-verhaal" for templates/page.ons-verhaal.json.
+ */
+export async function setPageTemplate(pageId: number, templateSuffix: string): Promise<ShopifyPage> {
+  const data = await shopifyFetch(`/pages/${pageId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({ page: { id: pageId, template_suffix: templateSuffix } }),
+  });
+  return data.page as ShopifyPage;
+}
