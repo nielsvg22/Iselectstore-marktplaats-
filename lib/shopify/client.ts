@@ -304,3 +304,11 @@ export async function getThemeAssetContent(themeId: number, key: string): Promis
   if (asset.attachment != null) return Buffer.from(asset.attachment, "base64").toString("utf-8");
   throw new Error(`Asset "${key}" had geen leesbare inhoud.`);
 }
+
+/** Overwrites one file on a given theme with new text content (e.g. to push a JSON template GitHub-sync is skipping). */
+export async function setThemeAssetContent(themeId: number, key: string, value: string): Promise<void> {
+  await shopifyFetch(`/themes/${themeId}/assets.json`, {
+    method: "PUT",
+    body: JSON.stringify({ asset: { key, value } }),
+  });
+}
