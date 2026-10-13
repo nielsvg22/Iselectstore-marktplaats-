@@ -279,3 +279,28 @@ export async function setPageTemplate(pageId: number, templateSuffix: string): P
   });
   return data.page as ShopifyPage;
 }
+
+export interface ShopifyTheme {
+  id: number;
+  name: string;
+  role: string;
+}
+
+/** The theme currently marked "Live" in Online winkel → Thema's. */
+export async function getMainTheme(): Promise<ShopifyTheme> {
+  const data = await shopifyFetch(`/themes.json`);
+  const themes = (data.themes as ShopifyTheme[]) || [];
+  const main = themes.find((t) => t.role === "main");
+  if (!main) throw new Error("Geen live ('main') thema gevonden.");
+  return main;
+}
+
+/** Raw contents of one file (e.g. "templates/index.json") from a given theme, straight from Shopify — bypasses any GitHub-sync assumptions. */
+export async function getThemeAssetContent(themeId: number, key: string): Promise<string> {
+  const data = await shopifyFetch(`/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`);
+  const asset = data.asset as { value?: string; attachment?: string } | undefined;
+  if (!asset) throw new Error(`Asset "${key}" niet gevonden op thema ${themeId}.`);
+  if (asset.value != null) return asset.value;
+  if (asset.attachment != null) return Buffer.from(asset.attachment, "base64").toString("utf-8");
+  throw new Error(`Asset "${key}" had geen leesbare inhoud.`);
+}
