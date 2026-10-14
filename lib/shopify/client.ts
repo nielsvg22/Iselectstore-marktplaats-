@@ -480,7 +480,7 @@ export async function uploadShopVideo(buffer: Buffer, filename: string, mimeType
 
   // Video processing (transcoding) takes longer than images — poll with a longer budget.
   let finalUrl: string | undefined;
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 45; attempt++) {
     const check = await shopifyGraphQL<{ node: { id: string; fileStatus: string; sources?: { url: string; mimeType: string }[] } | null }>(
       `query checkVideo($id: ID!) { node(id: $id) { ... on Video { id fileStatus sources { url mimeType } } } }`,
       { id: fileId }
@@ -493,9 +493,9 @@ export async function uploadShopVideo(buffer: Buffer, filename: string, mimeType
       break;
     }
     if (status === "FAILED") throw new Error(`Shopify kon de video niet verwerken (fileStatus FAILED): ${filename}`);
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 2000));
   }
-  if (!finalUrl) throw new Error(`Video ${filename} was na 20 pogingen nog niet "READY" bij Shopify.`);
+  if (!finalUrl) throw new Error(`Video ${filename} (id ${fileId}) was na 90s nog niet "READY" bij Shopify — probeer het statusendpoint later opnieuw met dit ID.`);
 
   return { id: fileId, url: finalUrl };
 }
