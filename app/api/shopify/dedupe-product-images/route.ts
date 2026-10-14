@@ -3,7 +3,7 @@ import { checkAdminPassword } from "@/lib/adminAuth";
 import { getProduct, deleteProductImage } from "@/lib/shopify/client";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 interface DedupeBody {
   productId: string;
@@ -62,8 +62,17 @@ export async function POST(req: NextRequest) {
 
     if (!dryRun) {
       for (const img of remove) {
-        await deleteProductImage(body.productId, img.id);
-        await new Promise((r) => setTimeout(r, 600));
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await deleteProductImage(body.productId, img.id);
+            break;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!msg.includes("429") || attempt === 4) throw err;
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+        await new Promise((r) => setTimeout(r, 900));
       }
     }
 
