@@ -487,7 +487,9 @@ export async function uploadShopVideo(buffer: Buffer, filename: string, mimeType
     );
     const status = check.node?.fileStatus;
     const sources = check.node?.sources || [];
-    const mp4 = sources.find((s) => s.mimeType === "video/mp4") || sources[0];
+    const mp4Sources = sources.filter((s) => s.mimeType === "video/mp4");
+    // Prefer the highest-quality mp4 rendition Shopify generated (url embeds "SD-480p" / "HD-720p" etc).
+    const mp4 = mp4Sources.find((s) => s.url.includes("HD-")) || mp4Sources[0] || sources[0];
     if (status === "READY" && mp4?.url) {
       finalUrl = mp4.url;
       break;
