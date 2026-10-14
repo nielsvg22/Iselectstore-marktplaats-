@@ -430,3 +430,72 @@ export async function uploadShopImage(buffer: Buffer, filename: string, mimeType
 
   return { id: fileId, url: finalUrl, shopifyReference: `shopify://shop_images/${filename}` };
 }
+
+/**
+ * Uploads a video into the shop's Files library and returns its direct,
+ * permanent CDN .mp4 URL — used instead of a theme "video" picker setting
+ * (whose JSON-template reference format Shopify doesn't document), so the
+ * theme can just play it with a plain &lt;video src&gt; tag.
+ */
+export async function uploadShopVideo(buffer: Buffer, filename: string, mimeType: string): Promise<{ id: string; url: string }> {
+  const staged = await shopifyGraphQL<{
+    stagedUploadsCreate: { stagedTargets: { url: string; resourceUrl: string; parameters: { name: string; value: string }[] }[]; userErrors: { message: string }[] };
+  }>(
+    `mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets { url resourceUrl parameters { name value } }
+        userErrors { message }
+      }
+    }`,
+    { input: [{ resource: "VIDEO", filename, mimeType, fileSize: String(buffer.length), httpMethod: "POST" }] }
+  );
+  if (staged.stagedUploadsCreate.userErrors.length > 0) {
+    throw new Error(`stagedUploadsCreate: ${JSON.stringify(staged.stagedUploadsCreate.userErrors)}`);
+  }
+  const target = staged.stagedUploadsCreate.stagedTargets[0];
+
+  const form = new FormData();
+  for (const p of target.parameters) form.append(p.name, p.value);
+  form.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename);
+  const uploadRes = await fetch(target.url, { method: "POST", body: form });
+  if (!uploadRes.ok) {
+    throw new Error(`Staged upload PUT failed (${uploadRes.status}): ${await uploadRes.text()}`);
+  }
+
+  const created = await shopifyGraphQL<{
+    fileCreate: { files: { id: string; fileStatus: string }[]; userErrors: { message: string }[] };
+  }>(
+    `mutation fileCreate($files: [FileCreateInput!]!) {
+      fileCreate(files: $files) {
+        files { id fileStatus }
+        userErrors { message }
+      }
+    }`,
+    { files: [{ originalSource: target.resourceUrl, contentType: "VIDEO", alt: filename }] }
+  );
+  if (created.fileCreate.userErrors.length > 0) {
+    throw new Error(`fileCreate: ${JSON.stringify(created.fileCreate.userErrors)}`);
+  }
+  const fileId = created.fileCreate.files[0].id;
+
+  // Video processing (transcoding) takes longer than images — poll with a longer budget.
+  let finalUrl: string | undefined;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const check = await shopifyGraphQL<{ node: { id: string; fileStatus: string; sources?: { url: string; mimeType: string }[] } | null }>(
+      `query checkVideo($id: ID!) { node(id: $id) { ... on Video { id fileStatus sources { url mimeType } } } }`,
+      { id: fileId }
+    );
+    const status = check.node?.fileStatus;
+    const sources = check.node?.sources || [];
+    const mp4 = sources.find((s) => s.mimeType === "video/mp4") || sources[0];
+    if (status === "READY" && mp4?.url) {
+      finalUrl = mp4.url;
+      break;
+    }
+    if (status === "FAILED") throw new Error(`Shopify kon de video niet verwerken (fileStatus FAILED): ${filename}`);
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  if (!finalUrl) throw new Error(`Video ${filename} was na 20 pogingen nog niet "READY" bij Shopify.`);
+
+  return { id: fileId, url: finalUrl };
+}
