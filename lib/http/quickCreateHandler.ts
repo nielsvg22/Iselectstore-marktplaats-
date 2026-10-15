@@ -20,6 +20,7 @@ export async function handleQuickCreatePost(
     productType?: unknown;
     values?: unknown;
     status?: unknown;
+    images?: unknown;
   };
   try {
     body = await req.json();
@@ -30,6 +31,13 @@ export async function handleQuickCreatePost(
     );
   }
 
+  const images = Array.isArray(body.images)
+    ? (body.images as unknown[])
+        .filter((img): img is { filename?: unknown; data?: unknown } => typeof img === "object" && img !== null)
+        .map((img) => ({ filename: String(img.filename || ""), data: String(img.data || "") }))
+        .filter((img) => img.data.length > 0)
+    : [];
+
   try {
     const result = await createQuickProduct({
       productType: String(body.productType || ""),
@@ -38,6 +46,7 @@ export async function handleQuickCreatePost(
           ? (body.values as Record<string, unknown>)
           : {},
       status: (body.status ?? "draft") as ProductStatus,
+      images,
     });
     return NextResponse.json(result, { headers });
   } catch (err) {

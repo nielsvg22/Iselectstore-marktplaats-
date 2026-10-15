@@ -11,7 +11,17 @@ import {
   stopBeforeSubmit,
   SubmitNotAllowedError,
 } from "./config";
-import { BrowserTestRun, compactMessage, recordStatus, setState } from "./status";
+import {
+  BrowserTestRun,
+  compactMessage,
+  isStopRequested,
+  recordStatus,
+  recordTiming,
+  setState,
+  takeSubmittedLogin,
+  timed,
+  waitForVerificationCode,
+} from "./status";
 import {
   CORE_FIELD_SELECTORS,
   SelectorCandidate,
@@ -27,7 +37,15 @@ import {
   cleanupStaleImageDirs,
   downloadImagesForBrowserTest,
 } from "./imageStore";
-import { getActiveContext, setActiveContext } from "./session";
+import {
+  autoLoginCooldownElapsed,
+  autoLoginCooldownRemainingMinutes,
+  getActiveContext,
+  recordAutoLoginAttempt,
+  setActiveContext,
+} from "./session";
+import { upsertCategoryMapping } from "../categoryService";
+import { setAttributeMapping } from "../mappingEngine";
 
 /**
  * MarktplaatsBrowserTestPublisher — LOCAL/DEV-ONLY Playwright test.
@@ -95,12 +113,44 @@ const PAYMENT_HEADING_PATTERN = /^betaal|^betalen|betaalmethode|winkelwagen/i;
 
 const MAX_ADVANCES = 4;
 
+/** Thrown when requestStop() is called for this run — a user clicked "Stop test". */
+class StoppedByUserError extends Error {
+  constructor() {
+    super("Test gestopt door gebruiker.");
+    this.name = "StoppedByUserError";
+  }
+}
+
+/**
+ * Thrown when the fixed Playwright profile cannot be opened for any reason
+ * other than the known stale-SingletonLock case, AND
+ * MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE is not explicitly set — see
+ * config.ts. Deliberately NOT swallowed into a silent throwaway-profile
+ * fallback: losing the real profile means losing the saved Marktplaats
+ * session (and its 2FA "trust this device" state), which otherwise forces a
+ * full re-login+MFA on every run without anyone noticing why.
+ */
+class ProfileUnavailableError extends Error {
+  readonly code = "MARKTPLAATS_PROFILE_UNAVAILABLE";
+  constructor(profileDir: string, cause: string) {
+    super(
+      `Het vaste Marktplaats-browserprofiel (${profileDir}) kon niet worden geopend: ${cause}. ` +
+        `De bestaande (ingelogde) sessie is NIET weggegooid — de test is gestopt in plaats van ` +
+        `stilletjes een leeg profiel te gebruiken. Controleer bestandsrechten/het persistent volume, ` +
+        `of zet MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=true als je bewust met een nieuw, leeg ` +
+        `profiel wilt testen (dan moet er opnieuw worden ingelogd).`
+    );
+    this.name = "ProfileUnavailableError";
+  }
+}
+
 export class MarktplaatsBrowserTestPublisher {
   private readonly config: BrowserTestConfig;
   private imageDir: string | null = null;
   private unfilled: string[] = [];
   private advances = 0;
   private debugFiles: string[] = [];
+  private cookiesHandled = false;
 
   constructor(private readonly run: BrowserTestRun) {
     this.config = getBrowserTestConfig();
@@ -139,20 +189,21 @@ export class MarktplaatsBrowserTestPublisher {
     cleanupStaleImageDirs();
     setState(this.run, "running", "Browser starten");
 
-    const context = await this.ensureContext();
+    const context = await timed(this.run, "Browser starten", () => this.ensureContext());
     const page = await this.resolvePage(context);
 
     try {
       await this.openPlacementPage(page);
+      await this.autoAcceptCookies(page);
       await this.snapshot(page, "00-plaatsingspagina");
-      await this.ensureLoggedIn(page);
+      await timed(this.run, "Login/MFA", () => this.ensureLoggedIn(page));
       await this.snapshot(page, "01-ingelogd");
 
       // De echte site is een wizard: stap 1 kent ALLEEN een titelveld en drie
       // cascaderende rubriek-dropdowns. Alles wat daar niet bestaat mag dus
       // pas ná "Verder" worden ingevuld.
       await this.fillStepOne(page, draft);
-      const advanced = await this.selectCategoryAndAdvance(page, draft);
+      const advanced = await timed(this.run, "Categorie selecteren", () => this.selectCategoryAndAdvance(page, draft));
       await this.snapshot(page, "02-detailformulier");
 
       if (!advanced) {
@@ -168,20 +219,32 @@ export class MarktplaatsBrowserTestPublisher {
         return;
       }
 
-      await this.uploadImages(page, draft);
-      await this.fillCoreFields(page, draft);
-      await this.fillStructuredFields(page, draft);
-      await this.fillSellerFields(page);
+      await timed(this.run, "Foto's uploaden", () => this.uploadImages(page, draft));
+      await timed(this.run, "Formulier invullen", async () => {
+        await this.fillCoreFields(page, draft);
+        await this.fillStructuredFields(page, draft);
+        await this.fillSellerFields(page);
+      });
 
       await this.maybeAdvance(page);
       await this.snapshot(page, "03-formulier-gevuld");
 
       await this.stopBeforeSubmitStep(page);
+    } catch (err) {
+      if (err instanceof StoppedByUserError) {
+        recordStatus(this.run, { field: "Gestopt", status: "info", detail: "Test gestopt — tabblad is gesloten." });
+        setState(this.run, "failed", "Gestopt door gebruiker");
+        // Close only this run's own tab — the shared context (and any other
+        // run's tab) stays open; other products may still be mid-run in it.
+        await page.close().catch(() => {});
+        return;
+      }
+      throw err;
     } finally {
-      // Never close the browser: it must stay open for manual inspection.
+      // Never close the browser on a normal finish: it must stay open for
+      // manual inspection. A user-requested stop closes it explicitly above.
       await cleanupImageDir(this.imageDir);
       this.imageDir = null;
-      await page.bringToFront().catch(() => {});
     }
   }
 
@@ -210,15 +273,32 @@ export class MarktplaatsBrowserTestPublisher {
     try {
       context = await launch(this.config.profileDir);
     } catch (err) {
-      // Profile likely locked by a previous dev-server process — fall back to
-      // a throw-away profile (the user simply has to log in once more).
-      const fallback = path.join(this.config.profileDir, `tmp-${process.pid}-${Date.now()}`);
-      this.warn(
-        "Browserprofiel",
-        `Kon het vaste profiel niet openen (${this.errMsg(err)}) — tijdelijk profiel gebruikt.`
-      );
-      ensureDir(fallback);
-      context = await launch(fallback);
+      const message = this.errMsg(err);
+      // Chromium's own process_singleton guard refuses to open a userDataDir
+      // it believes is still in use — but a Coolify redeploy (or any hard
+      // container kill) swaps the whole container without Chromium ever
+      // getting to clean up its own SingletonLock/-Cookie/-Socket files, so
+      // the NEXT launch sees a lock from a process that no longer exists
+      // anywhere. Clearing exactly those well-known files and retrying on
+      // the SAME profile keeps the real (logged-in) session instead of
+      // silently falling back to an empty throwaway profile.
+      const staleLock = /SingletonLock|process_singleton|locked the profile/i.test(message);
+      if (staleLock) {
+        try {
+          for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+            fs.rmSync(path.join(this.config.profileDir, name), { force: true });
+          }
+          context = await launch(this.config.profileDir);
+          this.warn(
+            "Browserprofiel",
+            `Verouderd lockbestand van een vorige (gestopte) container opgeruimd — bestaand profiel alsnog gebruikt.`
+          );
+        } catch (retryErr) {
+          context = await this.handleProfileUnavailable(launch, retryErr);
+        }
+      } else {
+        context = await this.handleProfileUnavailable(launch, err);
+      }
     }
 
     context.on("close", () => setActiveContext(null));
@@ -227,9 +307,43 @@ export class MarktplaatsBrowserTestPublisher {
     return context;
   }
 
+  /**
+   * The fixed profile failed to open for a reason that is NOT the known
+   * stale-SingletonLock case. This used to silently fall back to a brand-new
+   * empty profile — which throws away the logged-in session (and any 2FA
+   * "trust this device" state) without telling anyone, so every later run
+   * quietly had to log in + pass MFA again. That is now a hard, visible
+   * failure by default (see ProfileUnavailableError): the person running the
+   * test must see and decide, instead of unknowingly losing the session.
+   * MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=true keeps the old
+   * behaviour available for local dev.
+   */
+  private async handleProfileUnavailable(
+    launch: (userDataDir: string) => Promise<BrowserContext>,
+    err: unknown
+  ): Promise<BrowserContext> {
+    const reason = this.errMsg(err);
+    if (!this.config.allowThrowawayProfile) {
+      this.error("Browserprofiel", `Vast profiel onbeschikbaar (${reason}) — test gestopt, GEEN tijdelijk profiel gebruikt.`);
+      throw new ProfileUnavailableError(this.config.profileDir, reason);
+    }
+    const fallback = path.join(this.config.profileDir, `tmp-${process.pid}-${Date.now()}`);
+    this.warn(
+      "Browserprofiel",
+      `Kon het vaste profiel niet openen (${reason}) — MARKTPLAATS_BROWSER_ALLOW_THROWAWAY_PROFILE=true, dus een tijdelijk (leeg) profiel wordt gebruikt. Opnieuw inloggen is nodig.`
+    );
+    ensureDir(fallback);
+    return launch(fallback);
+  }
+
+  /**
+   * Always a fresh tab, never context.pages()[0] — multiple runs (different
+   * products) can be active at once, all sharing the same logged-in context
+   * (cookies/session), each working its own tab so they never fight over the
+   * same page's URL/form state.
+   */
   private async resolvePage(context: BrowserContext): Promise<Page> {
-    const pages = context.pages();
-    const page = pages[0] ?? (await context.newPage());
+    const page = await context.newPage();
     page.setDefaultTimeout(this.config.navigationTimeoutMs);
     page.setDefaultNavigationTimeout(this.config.navigationTimeoutMs);
     return page;
@@ -247,21 +361,64 @@ export class MarktplaatsBrowserTestPublisher {
   }
 
   /**
-   * No credentials are ever stored in code. If there is no valid session the
-   * browser simply waits (default 5 min) for a manual login; the persistent
-   * profile stores it for every next run.
+   * No credentials are ever stored in code. Three ways to get logged in, all
+   * equally valid at every loop iteration: (1) MARKTPLAATS_USERNAME /
+   * MARKTPLAATS_PASSWORD env vars trigger one automatic attempt, (2) the
+   * admin UI's login fields (POST .../login) submit credentials once via
+   * takeSubmittedLogin() — never persisted, (3) logging in by hand in the
+   * embedded/noVNC browser works too, since isLoggedIn() is polled every
+   * iteration regardless of how the session got there. The persistent
+   * profile stores the session either way, so this only runs again after the
+   * profile is wiped/expired.
    */
   private async ensureLoggedIn(page: Page): Promise<void> {
     const deadline = Date.now() + this.config.loginTimeoutMs;
     let waitingLogged = false;
+    let autoLoginAttempted = false;
 
     for (;;) {
+      if (isStopRequested(this.run)) throw new StoppedByUserError();
+
       if (await this.isLoggedIn(page)) {
         this.ok("Login", waitingLogged ? "Ingelogd — sessie lokaal opgeslagen in het Playwright-profiel" : "Bestaande sessie hergebruikt");
+        // setState() to "waiting_login"/"waiting_code" above only ever runs
+        // ONCE per run (waitingLogged guard / handleVerificationChallenge),
+        // and nothing ever set it back — so run.state stayed stuck on
+        // whichever wait state was last hit, for the rest of the run, even
+        // once login actually succeeded. The admin UI's live-VM view only
+        // shows during queued/running, so it silently stayed hidden for
+        // every later step too, not just the login/code wait itself.
+        setState(this.run, "running", "Ingelogd — formulier invullen");
         if (/login|inloggen|signin/i.test(page.url())) {
           await page.goto(this.config.placementUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
         }
         return;
+      }
+
+      await this.autoAcceptCookies(page);
+
+      if (await this.isVerificationChallenge(page)) {
+        await this.handleVerificationChallenge(page);
+        continue; // re-check isLoggedIn() immediately with the loop's top
+      }
+
+      const submittedLogin = takeSubmittedLogin(this.run.runId);
+      if (submittedLogin) {
+        await this.attemptAutoLogin(page, submittedLogin.username, submittedLogin.password);
+        continue; // re-check isLoggedIn() immediately with the loop's top
+      }
+
+      if (!autoLoginAttempted && this.config.username && this.config.password) {
+        autoLoginAttempted = true;
+        if (autoLoginCooldownElapsed()) {
+          recordAutoLoginAttempt();
+          await this.attemptAutoLogin(page, this.config.username, this.config.password);
+          continue; // re-check isLoggedIn() immediately with the loop's top
+        }
+        this.info(
+          "Login (auto)",
+          `Overgeslagen — vorige automatische poging was te recent (nog ${autoLoginCooldownRemainingMinutes()} min. afkoelperiode, ter bescherming tegen een Marktplaats-accountblokkade). Log handmatig in.`
+        );
       }
 
       if (Date.now() > deadline) {
@@ -285,20 +442,329 @@ export class MarktplaatsBrowserTestPublisher {
     }
   }
 
+  /**
+   * Marktplaats shows a cookie banner on first load of a fresh profile —
+   * accept it ourselves so it never blocks the login/2FA flow underneath.
+   * Only actually "handled" once a click succeeds, so it keeps retrying on
+   * every call (openPlacementPage, every ensureLoggedIn() loop iteration,
+   * attemptAutoLogin()) until the banner is gone — covers a banner that
+   * renders a beat later than the rest of the page.
+   *
+   * Tries several known consent-platform shapes, not just Marktplaats' own
+   * exact "Accepteren" button text, since a fresh profile occasionally shows
+   * a differently-worded or iframe-based (Cookiebot-style) variant:
+   *  - direct DOM button, common Dutch accept-all wording
+   *  - known CMP element ids (OneTrust) injected straight into the page
+   *  - a Cookiebot-style consent iframe
+   */
+  private async autoAcceptCookies(page: Page): Promise<void> {
+    if (this.cookiesHandled) return;
+    try {
+      const directCandidates = [
+        page.getByRole("button", { name: /^(accepteren|alles accepteren|accepteer alles|akkoord|ik ga akkoord)$/i }).first(),
+        page.locator("#onetrust-accept-btn-handler"),
+      ];
+      for (const candidate of directCandidates) {
+        const visible = await candidate.isVisible({ timeout: 1500 }).catch(() => false);
+        if (!visible) continue;
+        await candidate.click({ timeout: 3000 });
+        this.cookiesHandled = true;
+        this.info("Cookies", "Cookiemelding automatisch geaccepteerd");
+        await page.waitForTimeout(300).catch(() => {});
+        return;
+      }
+
+      // Cookiebot-style banners render inside their own iframe.
+      const consentFrame = page.frameLocator('iframe[id*="cookiebot" i], iframe[title*="cookie" i]').first();
+      const frameAccept = consentFrame.getByRole("button", { name: /^(accepteren|alles accepteren|akkoord)$/i }).first();
+      const frameVisible = await frameAccept.isVisible({ timeout: 1500 }).catch(() => false);
+      if (frameVisible) {
+        await frameAccept.click({ timeout: 3000 });
+        this.cookiesHandled = true;
+        this.info("Cookies", "Cookiemelding automatisch geaccepteerd (iframe)");
+        await page.waitForTimeout(300).catch(() => {});
+      }
+    } catch {
+      /* no cookie banner visible right now — nothing to do */
+    }
+  }
+
+  /** Detects Marktplaats' SMS/e-mail verification ("Beveiligingscontrole") step. */
+  private async isVerificationChallenge(page: Page): Promise<boolean> {
+    if (/two-factor-auth|2fa|challenge/i.test(page.url())) return true;
+    const heading = await page.locator("h1, h2").first().innerText().catch(() => "");
+    return /beveiligingscontrole|verificatiecode|voer de code in|tweestapsverificatie/i.test(heading);
+  }
+
+  /** Text Marktplaats shows next to the code field when a code was rejected or has expired. */
+  private static readonly INVALID_CODE_PATTERN = /onjuist|ongeldig|niet correct|verlopen|opnieuw aan|probeer het opnieuw/i;
+
+  /**
+   * Marktplaats asked for an SMS/e-mail verification code. Rather than make
+   * someone switch into the embedded noVNC view to type it, the run pauses
+   * in "waiting_code" state and the admin UI collects the code and posts it
+   * to POST /api/marktplaats/browser-test/code, which resolves
+   * waitForVerificationCode() below.
+   *
+   * Part 1 of the assignment: entering + submitting the code is NOT treated
+   * as success. After submission the run moves to "verifying_code" and
+   * waitForAuthenticationOutcome() explicitly waits for one of: navigation
+   * away from the challenge page combined with isLoggedIn() returning true
+   * (success → "authenticated"), a visible "invalid/expired code" message
+   * from Marktplaats itself (failure → back to "waiting_code" so a new code
+   * can be requested and entered through the official Marktplaats UI/live
+   * browser), a network error, or a timeout. Nothing is assumed.
+   */
+  private async handleVerificationChallenge(page: Page): Promise<void> {
+    const challengeUrl = page.url();
+    setState(this.run, "waiting_code", "Marktplaats vraagt een verificatiecode");
+    recordStatus(this.run, {
+      field: "Verificatiecode",
+      status: "info",
+      detail: "Vul de SMS/e-mailcode in via het invoerveld hierboven in het adminpaneel.",
+    });
+
+    const code = await waitForVerificationCode(this.run.runId, this.config.loginTimeoutMs);
+    if (isStopRequested(this.run)) throw new StoppedByUserError();
+    if (!code) {
+      this.warn(
+        "Verificatiecode",
+        `Geen code ontvangen binnen ${Math.round(this.config.loginTimeoutMs / 1000)}s — vul 'm zelf in via de live browser.`
+      );
+      return;
+    }
+
+    const filled = await this.enterVerificationCode(page, code);
+    if (!filled) {
+      this.warn("Verificatiecode", "Kon het invoerveld voor de code niet vinden — vul 'm zelf in via de live browser.");
+      return;
+    }
+
+    setState(this.run, "verifying_code", "Code verzonden — wachten op bevestiging van Marktplaats");
+    recordStatus(this.run, { field: "Verificatiecode", status: "info", detail: "Code verzonden — nog NIET bevestigd als geldig." });
+
+    const outcome = await this.waitForAuthenticationOutcome(page, challengeUrl, 20_000);
+    switch (outcome.kind) {
+      case "authenticated":
+        this.run.codeAttempts = 0;
+        this.ok("Verificatiecode", "Code geaccepteerd — sessie bevestigd geauthenticeerd");
+        setState(this.run, "authenticated", "Succesvol ingelogd");
+        return;
+      case "rejected":
+        this.run.codeAttempts = (this.run.codeAttempts ?? 0) + 1;
+        this.error(
+          "Verificatiecode",
+          `Code afgewezen door Marktplaats${outcome.detail ? ` ("${outcome.detail}")` : ""} — vraag een nieuwe code aan via de officiële Marktplaats-interface in de live browser en vul die opnieuw in.`
+        );
+        setState(this.run, "waiting_code", "Code ongeldig/verlopen — nieuwe code nodig");
+        return;
+      case "network_error":
+        this.warn("Verificatiecode", `Tijdelijke netwerkfout tijdens verifiëren (${outcome.detail}) — opnieuw proberen.`);
+        setState(this.run, "waiting_code", "Netwerkfout tijdens verifiëren — probeer opnieuw");
+        return;
+      default:
+        this.warn(
+          "Verificatiecode",
+          "Geen bevestiging en geen foutmelding gezien binnen de wachttijd — status blijft onbevestigd. Controleer de live browser handmatig."
+        );
+        setState(this.run, "waiting_code", "Onbevestigd na verzenden — controleer handmatig");
+    }
+  }
+
+  /**
+   * Explicit proof of authentication, never an assumption: either (a) the
+   * page navigated away from the 2FA challenge URL AND isLoggedIn() confirms
+   * an account marker, (b) Marktplaats shows its own "code is onjuist/
+   * verlopen" message, or (c) neither happens within timeoutMs. A thrown
+   * Playwright error (detached frame, closed page, …) is reported as
+   * "network_error" rather than silently treated as success or failure.
+   */
+  private async waitForAuthenticationOutcome(
+    page: Page,
+    challengeUrl: string,
+    timeoutMs: number
+  ): Promise<{ kind: "authenticated" } | { kind: "rejected"; detail: string } | { kind: "network_error"; detail: string } | { kind: "timeout" }> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (isStopRequested(this.run)) throw new StoppedByUserError();
+      try {
+        const stillOnChallenge = this.samePage(page.url(), challengeUrl) || (await this.isVerificationChallenge(page));
+        if (!stillOnChallenge && (await this.isLoggedIn(page))) {
+          return { kind: "authenticated" };
+        }
+
+        const errorNode = page.locator('[role="alert"], .hz-Text--error, .InputFeedback--error, [data-testid*="error"]').first();
+        const errorText = (await errorNode.innerText({ timeout: 300 }).catch(() => "")).trim();
+        if (errorText && MarktplaatsBrowserTestPublisher.INVALID_CODE_PATTERN.test(errorText)) {
+          return { kind: "rejected", detail: errorText.slice(0, 160) };
+        }
+      } catch (err) {
+        return { kind: "network_error", detail: this.errMsg(err) };
+      }
+      if (Date.now() >= deadline) return { kind: "timeout" };
+      await page.waitForTimeout(300).catch(() => {});
+    }
+  }
+
+  /**
+   * Fills a Marktplaats verification code, which may render either as one
+   * field or as several single-digit boxes depending on the challenge type.
+   */
+  private async enterVerificationCode(page: Page, rawCode: string): Promise<boolean> {
+    const digits = rawCode.replace(/\D/g, "");
+    if (!digits) return false;
+
+    try {
+      const boxes = page.locator('input[type="tel"], input[inputmode="numeric"], input[autocomplete="one-time-code"]');
+      const count = await boxes.count().catch(() => 0);
+      if (count > 1 && count >= digits.length) {
+        for (let i = 0; i < digits.length; i += 1) {
+          await boxes.nth(i).fill(digits[i]).catch(() => {});
+        }
+      } else {
+        const single = page
+          .getByLabel(/code|verificatie/i)
+          .or(page.locator('input[name*="code" i]'))
+          .or(boxes.first())
+          .first();
+        if ((await single.count().catch(() => 0)) === 0) return false;
+        await single.fill(digits);
+      }
+
+      const submit = page.getByRole("button", { name: /verstuur|bevestig|volgende|verifieer/i }).first();
+      await submit.click({ timeout: 5000 }).catch(async () => {
+        await page.keyboard.press("Enter").catch(() => {});
+      });
+      await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => {});
+      return true;
+    } catch (err) {
+      this.warn("Verificatiecode", `Invullen mislukt: ${this.errMsg(err)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Fills and submits the real Marktplaats login form with
+   * MARKTPLAATS_USERNAME / MARKTPLAATS_PASSWORD. Best-effort and silent on
+   * failure — isLoggedIn() is re-checked by the caller's loop either way, so
+   * a login-page layout change degrades to the normal manual-login wait
+   * rather than crashing the run.
+   */
+  private async attemptAutoLogin(page: Page, username: string, password: string): Promise<void> {
+    // Distinct field key from "Login" on purpose: that key gets overwritten
+    // by the later "wacht op handmatige login" status once this returns, so
+    // the outcome of the auto-login attempt would otherwise disappear from
+    // the UI even when it failed.
+    this.info("Login (auto)", "Automatisch inloggen met MARKTPLAATS_USERNAME/MARKTPLAATS_PASSWORD…");
+    try {
+      if (!/\/login|inloggen|signin|\/auth/i.test(page.url())) {
+        await page.goto(`${this.config.baseUrl}/inloggen`, { waitUntil: "domcontentloaded" }).catch(() => {});
+      }
+      await this.autoAcceptCookies(page);
+
+      const usernameField = page
+        .getByLabel(/e-?mail|gebruikersnaam|inlognaam/i)
+        .or(page.getByPlaceholder(/e-?mail|gebruikersnaam/i))
+        .or(page.locator('input[type="email"], input[name*="email" i], input[name*="username" i]'))
+        .first();
+      const passwordField = page
+        .getByLabel(/wachtwoord/i)
+        .or(page.getByPlaceholder(/wachtwoord/i))
+        .or(page.locator('input[type="password"]'))
+        .first();
+
+      await usernameField.waitFor({ state: "visible", timeout: this.config.navigationTimeoutMs });
+      await usernameField.fill(username);
+      await passwordField.waitFor({ state: "visible", timeout: 5000 });
+      await passwordField.fill(password);
+
+      // "Ingelogd blijven" (stay logged in) is checked by default on
+      // Marktplaats' own form, but make sure: an unchecked one here would
+      // give a short-lived session instead of the long-lived one the
+      // persistent profile is built around, causing 2FA to resurface on
+      // the very next run even though nothing actually went wrong.
+      const stayLoggedIn = page.getByLabel(/ingelogd blijven/i).first();
+      if ((await stayLoggedIn.count().catch(() => 0)) > 0 && !(await stayLoggedIn.isChecked().catch(() => true))) {
+        await stayLoggedIn.check().catch(() => {});
+      }
+
+      const submit = page
+        .getByRole("button", { name: /inloggen|log\s*in|aanmelden/i })
+        .first();
+      await submit.click({ timeout: 5000 }).catch(async () => {
+        await passwordField.press("Enter");
+      });
+
+      await page.waitForLoadState("domcontentloaded", { timeout: this.config.navigationTimeoutMs }).catch(() => {});
+      await this.settle(page, 1500);
+
+      const stillOnLogin = /\/login|inloggen|signin|\/auth/i.test(page.url());
+      if (stillOnLogin) {
+        const pageError = await this.readLoginError(page);
+        this.warn(
+          "Login (auto)",
+          `Nog op de inlogpagina na verzenden${pageError ? ` — melding: "${pageError}"` : " (geen foutmelding zichtbaar)"}`
+        );
+      } else {
+        this.info("Login (auto)", `Formulier verzonden — pagina na inloggen: ${page.url()}`);
+      }
+    } catch (err) {
+      this.warn("Login (auto)", `Automatisch inloggen mislukt (${this.errMsg(err)}) — val terug op handmatig inloggen. Pagina: ${page.url()}`);
+    }
+  }
+
+  /** Reads a visible inline error (e.g. "onjuiste combinatie") near the login form, if any. */
+  private async readLoginError(page: Page): Promise<string> {
+    try {
+      const nodes = page.locator(
+        '[role="alert"], .hz-Text--error, .InputFeedback--error, [data-testid*="error"], [class*="error" i]:visible'
+      );
+      const count = await nodes.count().catch(() => 0);
+      for (let i = 0; i < Math.min(count, 5); i += 1) {
+        const text = (await nodes.nth(i).innerText().catch(() => "")).trim().replace(/\s+/g, " ");
+        if (text.length > 0) return text.slice(0, 200);
+      }
+    } catch {
+      /* best-effort diagnostic only */
+    }
+    return "";
+  }
+
   private async isLoggedIn(page: Page): Promise<boolean> {
     const url = page.url();
     if (/\/login|inloggen|signin|\/auth/i.test(url)) return false;
+    // Real bug hit live: the 2FA interstitial's URL (…/two-factor-auth-setup/
+    // challenge?…&flow=login) doesn't match the check above (no "/login" with
+    // a leading slash, "auth" isn't preceded by one either), and that page
+    // shows no "Inloggen" button for the DOM-marker check below to catch
+    // either — so isLoggedIn() returned true while 2FA was still pending,
+    // ensureLoggedIn() skipped straight to the placement page instead of
+    // waiting for the code, got redirected back to the login form by
+    // Marktplaats, and every later field-fill step then failed because it
+    // was looking at the login form, not the placement form.
+    if (await this.isVerificationChallenge(page)) return false;
     try {
+      // Positive evidence only — part 1 of the assignment explicitly removes
+      // the old assumption that "no visible login button" is proof enough of
+      // being logged in. A page that is still loading, a layout change that
+      // moved/renamed the login button, or a transient blank state could all
+      // show zero login markers WITHOUT the user actually being logged in;
+      // treating that as "logged in" let the flow race ahead onto a form it
+      // was never actually authenticated for. Only an explicit account
+      // marker (profile/account link, or a visible "Uitloggen" control) now
+      // counts as proof — anything else is treated as "not logged in yet"
+      // and the caller's loop keeps waiting/polling instead of assuming.
       const accountMarkers = await page
-        .locator('a[href*="mijn-marktplaats" i], a[href*="/account" i], [data-testid*="profile" i], [data-testid*="account" i]')
+        .locator(
+          'a[href*="mijn-marktplaats" i], a[href*="/account" i], [data-testid*="profile" i], [data-testid*="account" i], button:has-text("Uitloggen"), a:has-text("Uitloggen")'
+        )
         .count();
-      if (accountMarkers > 0) return true;
-      const loginMarkers = await page
-        .locator('a[href*="login" i]:visible, button:has-text("Inloggen"):visible, a:has-text("Inloggen"):visible')
-        .count();
-      return loginMarkers === 0;
+      return accountMarkers > 0;
     } catch {
-      return true;
+      // On a genuine evaluation error (e.g. the page navigated mid-check) we
+      // do NOT default to "logged in" — an unconfirmed session must never be
+      // assumed valid. The caller's polling loop simply tries again.
+      return false;
     }
   }
 
@@ -358,7 +824,21 @@ export class MarktplaatsBrowserTestPublisher {
       { id: "#cat_sel_3", naam: "Type (L3)", kandidaten: this.typeCandidates(draft), verplicht: false, wacht: 8000 },
     ];
 
+    // Reuse an already-verified mapping (part 5: "hergebruik bestaande
+    // categoriemappings") — when a previous real run already discovered the
+    // numeric option value for this Shopify product type, select it
+    // directly by value instead of re-running the name-matching search
+    // below. Falls through to the text search when the known value is no
+    // longer present (Marktplaats changed its category tree).
+    const mappingVerified = !draft.category.l1CategoryId.includes("UNVERIFIED") && !draft.category.l2CategoryId.includes("UNVERIFIED");
+    const knownIds: Record<string, string | null> = {
+      "#cat_sel_1": mappingVerified ? draft.category.l1CategoryId : null,
+      "#cat_sel_2": mappingVerified ? draft.category.l2CategoryId : null,
+    };
+
     let gekozen = 0;
+    let l1Value: string | null = null;
+    let l2Value: string | null = null;
     for (const step of steps) {
       const select = page.locator(step.id).first();
       // The rubric dropdowns hydrate separately from the title field, so a
@@ -376,11 +856,17 @@ export class MarktplaatsBrowserTestPublisher {
         continue;
       }
       await this.waitForOptionCount(page, select, 2, 8000);
-      const optie = await this.selectByText(select, step.kandidaten);
+      const optie = (await this.selectByKnownValue(select, knownIds[step.id] ?? null)) ?? (await this.selectByText(select, step.kandidaten));
       if (optie) {
         gekozen += 1;
-        this.ok(step.naam, optie);
-        await page.waitForTimeout(800);
+        this.ok(step.naam, `${optie.text} (id ${optie.value})`);
+        if (step.id === "#cat_sel_1") l1Value = optie.value;
+        if (step.id === "#cat_sel_2") l2Value = optie.value;
+        // Event-based instead of a blind fixed sleep: wait for the network
+        // to actually go quiet (the next cascade level's options load over
+        // XHR) rather than always paying the full 800ms regardless of how
+        // fast Marktplaats responds.
+        await this.settle(page, 800);
       } else {
         this.warn(
           step.naam,
@@ -392,6 +878,21 @@ export class MarktplaatsBrowserTestPublisher {
     if (gekozen === 0) {
       this.error("Categorie", "Geen enkele rubriek kon geselecteerd worden.");
       return false;
+    }
+
+    // Marktplaats requires numeric category IDs for the feed/API — ours start
+    // as "UNVERIFIED" placeholders. A successful real selection here proves
+    // the actual IDs, so persist them for reuse (e.g. by the feed builder)
+    // instead of requiring official API access to look them up.
+    if (l1Value && l2Value) {
+      await upsertCategoryMapping({
+        shopifyProductType: draft.productType,
+        l1CategoryId: l1Value,
+        l1CategoryName: draft.category.l1CategoryName,
+        l2CategoryId: l2Value,
+        l2CategoryName: draft.category.l2CategoryName,
+      }).catch((err) => this.warn("Categorie", `Kon ontdekte categorie-ID's niet opslaan: ${this.errMsg(err)}`));
+      this.info("Categorie", `Echte categorie-ID's ontdekt en opgeslagen (L1=${l1Value}, L2=${l2Value})`);
     }
 
     return this.advanceToDetails(page);
@@ -444,6 +945,29 @@ export class MarktplaatsBrowserTestPublisher {
     return [...new Set(out.filter((p) => p.length > 0))];
   }
 
+  /**
+   * Diagnostic only: the real label text currently visible on the form, so a
+   * field that no alias matches can be fixed from the run status alone
+   * instead of needing a screenshot of the live browser.
+   */
+  private async listVisibleLabels(page: Page): Promise<string> {
+    try {
+      const labels = await page.evaluate(() => {
+        const texts = new Set<string>();
+        document.querySelectorAll("label").forEach((el) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          const text = (el.textContent ?? "").trim().replace(/\s+/g, " ");
+          if (text.length > 0 && text.length < 60) texts.add(text);
+        });
+        return [...texts];
+      });
+      return labels.slice(0, 40).join(" | ");
+    } catch {
+      return "";
+    }
+  }
+
   private async optionPreview(select: Locator): Promise<string> {
     const texts = await select
       .evaluate((el) => [...(el as HTMLSelectElement).options].map((o) => o.textContent?.trim() ?? ""))
@@ -453,8 +977,39 @@ export class MarktplaatsBrowserTestPublisher {
       : "geen opties geladen";
   }
 
+  /**
+   * Fast path for a previously-verified category mapping: select the known
+   * option value directly instead of re-running the (slower) name-matching
+   * search in selectByText(). Returns null — not an error — when the value
+   * is no longer one of the dropdown's options, so the caller falls back to
+   * the text search transparently (Marktplaats occasionally renumbers its
+   * category tree).
+   */
+  private async selectByKnownValue(select: Locator, value: string | null): Promise<{ text: string; value: string } | null> {
+    if (!value) return null;
+    const options = await select
+      .evaluate((el) => [...(el as HTMLSelectElement).options].map((o) => ({ value: o.value, text: (o.textContent ?? "").trim() })))
+      .catch(() => [] as { value: string; text: string }[]);
+    const hit = options.find((o) => o.value === value);
+    if (!hit) return null;
+    await select.selectOption(hit.value);
+    return hit;
+  }
+
+  /**
+   * Bounded, event-based settle used after a selection/click that triggers a
+   * background XHR (e.g. the next category cascade loading its options):
+   * waits for the network to actually go quiet instead of always sleeping
+   * the full `capMs`, but still gives up after `capMs` so a page that keeps
+   * some unrelated connection open (analytics, websockets) never blocks the
+   * flow longer than the old fixed wait used to.
+   */
+  private async settle(page: Page, capMs: number): Promise<void> {
+    await page.waitForLoadState("networkidle", { timeout: capMs }).catch(() => {});
+  }
+
   /** Exact → startsWith → contains, so a broad name still picks the right row. */
-  private async selectByText(select: Locator, candidates: string[]): Promise<string | null> {
+  private async selectByText(select: Locator, candidates: string[]): Promise<{ text: string; value: string } | null> {
     const options = await select
       .evaluate((el) =>
         [...(el as HTMLSelectElement).options].map((o) => ({ value: o.value, text: (o.textContent ?? "").trim() }))
@@ -468,7 +1023,7 @@ export class MarktplaatsBrowserTestPublisher {
         const hit = options.find((o) => o.text && test(w, o.text.toLowerCase()));
         if (hit && hit.value) {
           await select.selectOption(hit.value);
-          return hit.text;
+          return hit;
         }
       }
     }
@@ -583,10 +1138,32 @@ export class MarktplaatsBrowserTestPublisher {
 
     try {
       await resolved.locator.setInputFiles(download.files.map((f) => f.filePath));
-      await page.waitForTimeout(2500);
+      // Event-based: wait for the thumbnail count to actually reach the
+      // uploaded file count (polled, capped) instead of always sleeping a
+      // fixed 2500ms regardless of upload speed. Falls back to a bounded
+      // networkidle wait when no thumbnail markup is found (layout change).
+      const uploaded = await this.waitForThumbnails(page, download.files.length, 6000);
+      if (!uploaded) await this.settle(page, 2500);
       this.ok("Afbeeldingen", `${download.files.length} afbeelding(en) toegevoegd`);
     } catch (err) {
       this.error("Afbeeldingen", `Uploaden mislukt: ${this.errMsg(err)}`);
+    }
+  }
+
+  /**
+   * Polls (bounded) for at least `expected` rendered image thumbnails near
+   * the file input, so the flow moves on as soon as the upload has actually
+   * finished rendering instead of always waiting the old fixed 2500ms.
+   */
+  private async waitForThumbnails(page: Page, expected: number, timeoutMs: number): Promise<boolean> {
+    if (expected <= 0) return true;
+    const deadline = Date.now() + timeoutMs;
+    const thumbnails = page.locator('img[src^="blob:"], img[src^="data:"], [data-testid*="image" i] img, [class*="thumbnail" i] img');
+    for (;;) {
+      const count = await thumbnails.count().catch(() => 0);
+      if (count >= expected) return true;
+      if (Date.now() >= deadline) return false;
+      await page.waitForTimeout(200).catch(() => {});
     }
   }
 
@@ -624,6 +1201,7 @@ export class MarktplaatsBrowserTestPublisher {
   // ------------------------------------------------------ structured fields
 
   private async fillStructuredFields(page: Page, draft: AdvertisementDraft): Promise<void> {
+    const l2CategoryId = draft.category?.l2CategoryId ?? null;
     for (const field of draft.fields) {
       const label = field.marktplaatsLabel ?? field.label;
       const candidates = buildAttributeCandidates({
@@ -640,8 +1218,35 @@ export class MarktplaatsBrowserTestPublisher {
         marktplaatsKey: field.marktplaatsKey,
         timeoutMs: field.expectsMarktplaatsField ? 2500 : 800,
         options: field.marktplaatsOptions,
+        discoverAttribute: l2CategoryId && !l2CategoryId.includes("UNVERIFIED") ? { internalField: field.key, l2CategoryId } : undefined,
       });
     }
+  }
+
+  /**
+   * Reads the real Marktplaats attribute key off the DOM element that was
+   * just filled (e.g. name="singleSelectAttribute[condition]" or a
+   * data-testid="attribute-autocomplete-merk"), so the feed builder can use
+   * the real key instead of a mock_-prefixed placeholder — without ever
+   * needing official API access to look the key up.
+   */
+  private async discoverAttributeKey(locator: Locator): Promise<string | null> {
+    try {
+      const [name, testid] = await Promise.all([
+        locator.getAttribute("name").catch(() => null),
+        locator.getAttribute("data-testid").catch(() => null),
+      ]);
+      for (const raw of [name, testid]) {
+        if (!raw) continue;
+        const bracket = raw.match(/(?:singleSelectAttribute|numericAttribute|attribute)\[([^\]]+)\]/);
+        if (bracket) return bracket[1];
+        const autocomplete = raw.match(/^attribute-autocomplete-(.+)$/);
+        if (autocomplete) return autocomplete[1];
+      }
+    } catch {
+      /* best-effort discovery only */
+    }
+    return null;
   }
 
   private async fillOne(
@@ -655,6 +1260,7 @@ export class MarktplaatsBrowserTestPublisher {
       timeoutMs: number;
       marktplaatsKey?: string | null;
       options?: AdvertisementDraft["fields"][number]["marktplaatsOptions"];
+      discoverAttribute?: { internalField: string; l2CategoryId: string };
     }
   ): Promise<void> {
     const { label, value, expects } = params;
@@ -666,13 +1272,24 @@ export class MarktplaatsBrowserTestPublisher {
     const resolved = await this.waitForResolve(page, params.candidates, params.timeoutMs);
     if (!resolved) {
       const tried = params.candidates.length;
-      // A key still carrying the mock_ prefix comes from the placeholder API
-      // schema, so its absence on the live form is expected, not a defect.
-      if (params.marktplaatsKey?.startsWith("mock_")) {
-        this.info(label, `geen echt Marktplaats-attribuut (mapping-sleutel ${params.marktplaatsKey})`);
-      } else if (expects) {
-        this.warn(label, `niet gevonden op het Marktplaats-formulier (${tried} selectoren geprobeerd)`);
+      // expects (expectsMarktplaatsField) must win over the mock_ check: while
+      // every category mapping here is still "UNVERIFIED", attributeCache.ts
+      // forces mock mode unconditionally, so EVERY field's marktplaatsKey
+      // carries the mock_ prefix — including fields that genuinely exist on
+      // the real form. Checking mock_ first silently downgraded real misses
+      // (e.g. storage_gb on MacBook) to a harmless-looking "info" line that
+      // never even reached maybeAdvance()'s retry-after-"Volgende" logic.
+      if (expects) {
+        const nearby = await this.listVisibleLabels(page);
+        this.warn(
+          label,
+          `niet gevonden op het Marktplaats-formulier (${tried} selectoren geprobeerd)${
+            nearby ? ` — zichtbare labels op de pagina: ${nearby}` : ""
+          }`
+        );
         this.unfilled.push(label);
+      } else if (params.marktplaatsKey?.startsWith("mock_")) {
+        this.info(label, `geen echt Marktplaats-attribuut (mapping-sleutel ${params.marktplaatsKey})`);
       } else {
         this.info(label, `geen bijpassend Marktplaats-veld (${tried} selectoren geprobeerd)`);
       }
@@ -736,6 +1353,14 @@ export class MarktplaatsBrowserTestPublisher {
             ? `geselecteerd "${matched}" ← "${value}" (${resolved.candidate.note ?? resolved.candidate.strategy})`
             : `ingevuld (${resolved.candidate.note ?? resolved.candidate.strategy})`
         );
+        if (params.discoverAttribute) {
+          const key = await this.discoverAttributeKey(resolved.locator);
+          if (key) {
+            await setAttributeMapping(params.discoverAttribute.l2CategoryId, params.discoverAttribute.internalField, key).catch(
+              (err) => this.warn(label, `Kon ontdekte attribuutsleutel niet opslaan: ${this.errMsg(err)}`)
+            );
+          }
+        }
       } else {
         this.warn(label, "veld gevonden maar de waarde lijkt niet te zijn toegepast");
         this.unfilled.push(label);
@@ -1012,7 +1637,7 @@ export class MarktplaatsBrowserTestPublisher {
       try {
         await resolved.locator.click();
         this.advances += 1;
-        await page.waitForTimeout(1500);
+        await this.settle(page, 1500);
         this.info("Volgende stap", `"${name}" aangeklikt om resterende velden te bereiken`);
       } catch (err) {
         this.warn("Volgende stap", `Doorklikken mislukt: ${this.errMsg(err)}`);
@@ -1217,6 +1842,10 @@ export class MarktplaatsBrowserTestPublisher {
   }
 
   private async snapshot(page: Page, step: string): Promise<void> {
+    // Disk I/O (a PNG + full HTML dump) on every single step adds up over a
+    // run and is only useful while actively debugging selectors — skip it
+    // entirely in production-like runs via MARKTPLAATS_BROWSER_DEBUG_ARTIFACTS=false.
+    if (!this.config.captureDebugArtifacts) return;
     try {
       const dir = ensureDir(this.config.debugDir);
       const base = `${this.run.runId}-${step}`;

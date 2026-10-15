@@ -3,9 +3,10 @@ import { marktplaatsService } from "@/lib/marktplaats/service";
 import { marktplaatsApiPublisher } from "@/lib/marktplaats/apiPublisher";
 import { MarktplaatsBrowserTestPublisher } from "@/lib/marktplaats/browserTest/browserTestPublisher";
 import { getBrowserTestConfig, isBrowserTestEnabled } from "@/lib/marktplaats/browserTest/config";
+import { hasRemoteBrowserTest, proxyToRemoteBrowserTest } from "@/lib/marktplaats/browserTest/remoteProxy";
 import {
   createRun,
-  findActiveRun,
+  findActiveRunForProduct,
   getRun,
   isRunActive,
   recordStatus,
@@ -34,6 +35,10 @@ export async function GET(req: NextRequest) {
   const runId = req.nextUrl.searchParams.get("runId");
   const config = getBrowserTestConfig();
 
+  if (!config.enabled && hasRemoteBrowserTest()) {
+    return proxyToRemoteBrowserTest(req, "/api/marktplaats/browser-test");
+  }
+
   if (runId) {
     const run = getRun(runId);
     if (!run) return NextResponse.json({ error: "Onbekende testrun." }, { status: 404 });
@@ -46,6 +51,23 @@ export async function GET(req: NextRequest) {
     apiConfigured: marktplaatsApiPublisher.isConfigured(),
     placementUrl: config.placementUrl,
     profileDir: config.profileDir,
+    // Only present when deployed with a separate noVNC service (e.g.
+    // Coolify) — lets the admin UI embed the live browser view directly.
+    // SECURITY (part 4 of the assignment): the noVNC PASSWORD used to be
+    // sent here too and pasted straight into the iframe's `src` as a
+    // `?password=...` query param — visible in browser history, any
+    // server/proxy access log, and the `Referer` header of every request the
+    // iframe's own page makes. It is intentionally no longer included in
+    // this response. The iframe now loads noVNC WITHOUT a password in the
+    // URL; noVNC's own password prompt (inside the embedded VM view, over
+    // the WebSocket connection — never an HTTP query string) is the
+    // authorized way to connect. See panel.tsx's "Browser handmatig
+    // bedienen" control and MARKTPLAATS_INTEGRATION.md for the remaining
+    // open item (no proxy yet translates a short-lived token into this
+    // password, so the real VNC_PASSWORD must still be typed by hand once
+    // per noVNC session — see the report for why that proxy is out of scope
+    // here).
+    novncUrl: config.novncUrl,
   });
 }
 
@@ -57,6 +79,10 @@ export async function GET(req: NextRequest) {
  * the advertisement is never published while ALLOW_SUBMIT is false.
  */
 export async function POST(req: NextRequest) {
+  if (!isBrowserTestEnabled() && hasRemoteBrowserTest()) {
+    return proxyToRemoteBrowserTest(req, "/api/marktplaats/browser-test");
+  }
+
   const { shopifyProductId } = await req.json().catch(() => ({}) as { shopifyProductId?: string });
   if (!shopifyProductId) {
     return NextResponse.json({ error: "shopifyProductId is verplicht" }, { status: 400 });
@@ -72,10 +98,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const active = findActiveRun();
+  const active = findActiveRunForProduct(shopifyProductId);
   if (active) {
     return NextResponse.json(
-      { error: "Er draait al een Marktplaats-browsertest. Wacht tot deze klaar is.", runId: active.runId },
+      { error: "Er draait al een Marktplaats-browsertest voor dit product. Wacht tot deze klaar is.", runId: active.runId },
       { status: 409 }
     );
   }
@@ -115,7 +141,14 @@ export async function POST(req: NextRequest) {
       setState(run, "failed", message);
       await safeLog("browser_test_error", shopifyProductId, message);
     } finally {
-      if (run.state === "queued" || run.state === "running" || run.state === "waiting_login") {
+      if (
+        run.state === "queued" ||
+        run.state === "running" ||
+        run.state === "waiting_login" ||
+        run.state === "waiting_code" ||
+        run.state === "verifying_code" ||
+        run.state === "authenticated"
+      ) {
         setState(run, "done", run.message ?? "Klaar");
       }
     }

@@ -53,7 +53,7 @@ function synthProduct(id: string, title: string, handle: string, quantity = 1): 
     body_html: null,
     handle,
     images: [],
-    variants: [{ id: Number(id) + 1, price: "10.00", compare_at_price: null, inventory_quantity: quantity, inventory_management: "shopify" }],
+    variants: [{ id: Number(id) + 1, price: "10.00", compare_at_price: null, inventory_quantity: quantity, inventory_management: "shopify", barcode: null }],
   } as ShopifyProduct;
 }
 

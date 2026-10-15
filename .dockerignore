@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.env
+.env.local
+.env*
+!.env.example
+*.log
+*.tsbuildinfo
+.vercel
+.playwright
+.marktplaats-browser-profile*
+test-results
+playwright-report
+__tests__

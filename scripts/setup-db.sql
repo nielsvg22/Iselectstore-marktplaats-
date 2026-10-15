@@ -89,6 +89,57 @@ CREATE TABLE IF NOT EXISTS marktplaats_integration_test (
 );
 
 -- =============================================================================
+-- GoedGeplaatst REST API integratie (tweede, naast-elkaar-bestaande
+-- plaatsingsmethode naast de Playwright-bot en de Admarkt-feed; zie
+-- lib/goedgeplaatst/). link_key is "shopify:<shopifyProductId>" voor
+-- productkoppelingen of "manual:<client-gegenereerde-uuid>" voor het
+-- losstaande testformulier — in beide gevallen de idempotency-sleutel die
+-- voorkomt dat herhaald indrukken van de testknop een dubbele advertentie
+-- aanmaakt (zie lib/goedgeplaatst/service.ts createConceptAd).
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS goedgeplaatst_product_link (
+  link_key VARCHAR(128) NOT NULL,
+  environment VARCHAR(20) NOT NULL DEFAULT 'sandbox',
+  shopify_product_id VARCHAR(64),
+  goedgeplaatst_ad_id VARCHAR(255),
+  concept_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+  mock BOOLEAN NOT NULL DEFAULT false,
+  last_sync_at TIMESTAMPTZ,
+  last_error TEXT,
+  -- The attribute key/label/value triples actually sent in POST /ads/ for
+  -- this ad, so verifyAd() (lib/goedgeplaatst/service.ts) can diff them
+  -- against what GET /ads/ confirms was saved (STAP 7/8) without
+  -- re-deriving the mapping.
+  sent_attributes JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (link_key, environment)
+);
+
+-- Backfills the column on an already-deployed database, where the
+-- CREATE TABLE IF NOT EXISTS above is a no-op.
+ALTER TABLE goedgeplaatst_product_link ADD COLUMN IF NOT EXISTS sent_attributes JSONB;
+
+CREATE INDEX IF NOT EXISTS idx_goedgeplaatst_link_shopify ON goedgeplaatst_product_link(shopify_product_id);
+
+CREATE TABLE IF NOT EXISTS goedgeplaatst_sync_log (
+  id SERIAL PRIMARY KEY,
+  link_key VARCHAR(128),
+  shopify_product_id VARCHAR(64),
+  goedgeplaatst_ad_id VARCHAR(255),
+  action VARCHAR(100) NOT NULL,
+  api_operation VARCHAR(255),
+  result VARCHAR(20),
+  http_status INTEGER,
+  message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_goedgeplaatst_sync_log_link ON goedgeplaatst_sync_log(link_key);
+CREATE INDEX IF NOT EXISTS idx_goedgeplaatst_sync_log_created ON goedgeplaatst_sync_log(created_at DESC);
+
+-- =============================================================================
 -- VERKOCHT-sticker feature
 -- =============================================================================
 

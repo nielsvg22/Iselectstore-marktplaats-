@@ -1,6 +1,6 @@
 import "@shopify/ui-extensions/preact";
 import { render } from "preact";
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import { getTemplate, listProductTypes } from "../../../lib/templates/registry";
 import {
   validateQuickProductData,
@@ -88,6 +88,30 @@ function QuickCreateAction() {
   const [draftImages, setDraftImages] = useState([]);
   const [draftStatus, setDraftStatus] = useState("");
 
+  // Foto's die de gebruiker vóór het aanmaken rechtstreeks in dit scherm
+  // kiest (los van de "Haal info op via AI-foto"-omweg) — pas na het
+  // aanmaken geüpload, want /api/shopify/quick-image heeft een bestaande
+  // productId nodig.
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const MAX_PENDING_FILES = 5;
+
+  function fileIdentity(f) {
+    return `${f.name}:${f.size}:${f.lastModified}`;
+  }
+
+  // s-drop-zone dispatches both an "input" and a "change" event for the
+  // same selection (zelfde patroon als elk ander veld in ProductForm.jsx,
+  // die altijd op beide luistert) — dedupe op bestandsidentiteit zodat dat
+  // nooit dubbele entries oplevert.
+  function handlePendingFiles(fileList) {
+    const incoming = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
+    setPendingFiles((prev) => {
+      const known = new Set(prev.map(fileIdentity));
+      const added = incoming.filter((f) => !known.has(fileIdentity(f)));
+      return added.length === 0 ? prev : [...prev, ...added].slice(0, MAX_PENDING_FILES);
+    });
+  }
+
   async function fetchDraft(auto) {
     if (busy || result) return;
     if (!auto) setDraftStatus("Bezig met ophalen…");
@@ -133,27 +157,34 @@ function QuickCreateAction() {
   }, [result, draftId]);
 
   // Zodra het product is aangemaakt: foto's die via de AI-pagina zijn
-  // opgehaald automatisch meesturen, zonder dat de gebruiker ze opnieuw
-  // hoeft te uploaden in dit venster.
+  // opgehaald, EN foto's die rechtstreeks in dit scherm gekozen zijn
+  // (pendingFiles), automatisch meesturen — geen tweede upload-stap nodig.
   useEffect(() => {
-    if (!result || draftImages.length === 0) return;
+    if (!result || (draftImages.length === 0 && pendingFiles.length === 0)) return;
     (async () => {
       setImageState({ busy: true, message: "" });
       const token = await getIdToken();
       if (!token) {
-        setImageState({ busy: false, message: "Kon geen Shopify-sessietoken ophalen voor de AI-foto's." });
+        setImageState({ busy: false, message: "Kon geen Shopify-sessietoken ophalen voor de foto's." });
         return;
       }
-      const uploaded = await uploadDraftImages(token, result.productId, draftImages);
-      let message = "";
-      if (uploaded.added > 0) {
-        message = `${uploaded.added} foto${uploaded.added === 1 ? "" : "'s"} van de AI-pagina toegevoegd.`;
+      let added = 0;
+      let error = "";
+      if (draftImages.length > 0) {
+        const uploadedDraft = await uploadDraftImages(token, result.productId, draftImages);
+        added += uploadedDraft.added;
+        if (uploadedDraft.error) error = uploadedDraft.error;
       }
-      if (uploaded.error) {
-        message = message ? `${message} ${uploaded.error}` : uploaded.error;
+      if (!error && pendingFiles.length > 0) {
+        const uploadedLocal = await uploadImages({ token, productId: result.productId, files: pendingFiles });
+        added += uploadedLocal.added;
+        if (uploadedLocal.error) error = uploadedLocal.error;
       }
+      let message = added > 0 ? `${added} foto${added === 1 ? "" : "'s"} toegevoegd.` : "";
+      if (error) message = message ? `${message} ${error}` : error;
       setImageState({ busy: false, message });
       setDraftImages([]);
+      setPendingFiles([]);
     })();
   }, [result]);
 
@@ -211,9 +242,15 @@ function QuickCreateAction() {
     }
   }
 
+  // state (imageState.busy) is async en kan voor zowel "input" als "change"
+  // nog de oude waarde teruggeven binnen dezelfde tick — een ref is
+  // synchroon en voorkomt dat dezelfde selectie dubbel geüpload wordt.
+  const uploadingRef = useRef(false);
+
   async function handleFiles(files) {
     if (!result || !files || files.length === 0) return;
-    if (imageState && imageState.busy) return;
+    if (uploadingRef.current) return;
+    uploadingRef.current = true;
     setImageState({ busy: true, message: "" });
     try {
       const token = await getIdToken();
@@ -240,6 +277,7 @@ function QuickCreateAction() {
       }
       setImageState({ busy: false, message });
     } finally {
+      uploadingRef.current = false;
       setImageState((prev) =>
         prev && prev.busy
           ? { busy: false, message: prev.message || "Upload afgebroken." }
@@ -286,17 +324,34 @@ function QuickCreateAction() {
             issues={issues}
             onChange={handleValueChange}
             aiShortcut={
-              <s-stack direction="inline" gap="base" alignItems="center">
-                <s-link
-                  href={`${BACKEND_URL}/admin/quick-create?productType=${encodeURIComponent(productType)}&draftId=${draftId}`}
-                  target="_blank"
-                >
-                  📷 Haal info op via AI-foto
-                </s-link>
-                <s-button variant="tertiary" onClick={() => fetchDraft(false)}>
-                  🔄 Nu ophalen
-                </s-button>
-                {draftStatus ? <s-text tone="subdued">{draftStatus}</s-text> : null}
+              <s-stack direction="block" gap="base">
+                <s-stack direction="inline" gap="base" alignItems="center">
+                  <s-link
+                    href={`${BACKEND_URL}/admin/quick-create?productType=${encodeURIComponent(productType)}&draftId=${draftId}`}
+                    target="_blank"
+                  >
+                    📷 Haal info op via AI-foto
+                  </s-link>
+                  <s-button variant="tertiary" onClick={() => fetchDraft(false)}>
+                    🔄 Nu ophalen
+                  </s-button>
+                  {draftStatus ? <s-text tone="subdued">{draftStatus}</s-text> : null}
+                </s-stack>
+                <s-stack direction="block" gap="base">
+                  <s-text type="strong">Foto's (optioneel)</s-text>
+                  {pendingFiles.length > 0 ? (
+                    <s-text tone="subdued">
+                      {pendingFiles.length} foto{pendingFiles.length === 1 ? "" : "'s"} geselecteerd — worden na het aanmaken geüpload.
+                    </s-text>
+                  ) : null}
+                  <s-drop-zone
+                    accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
+                    multiple
+                    label="Sleep foto's hierheen of klik om te selecteren (max. 3 MB per bestand, max. 5 foto's)"
+                    onInput={(event) => handlePendingFiles(event.currentTarget.files)}
+                    onChange={(event) => handlePendingFiles(event.currentTarget.files)}
+                  />
+                </s-stack>
               </s-stack>
             }
           />
@@ -313,6 +368,7 @@ function QuickCreateAction() {
               multiple
               disabled={Boolean(imageState && imageState.busy)}
               label="Sleep afbeeldingen hierheen of klik om te selecteren (max. 3 MB per bestand)"
+              onInput={(event) => handleFiles(event.currentTarget.files)}
               onChange={(event) => handleFiles(event.currentTarget.files)}
             />
           </s-stack>

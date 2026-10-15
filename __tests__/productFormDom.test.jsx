@@ -26,7 +26,11 @@ describe("ProductForm DOM-render onder Preact", () => {
     );
     expect(container.querySelectorAll("s-select").length).toBeGreaterThanOrEqual(2);
     expect(container.querySelectorAll("s-option").length).toBeGreaterThanOrEqual(5);
-    expect(container.querySelectorAll("s-text-field").length).toBeGreaterThanOrEqual(3);
+    // "model" and "color" became dropdowns (see lib/templates/registry.ts
+    // withOptions) after a live create-ad failure showed free text there
+    // let a merchant type an invalid model/color GoedGeplaatst rejects —
+    // "generation" and "manufacturer_name" are the remaining free-text fields.
+    expect(container.querySelectorAll("s-text-field").length).toBeGreaterThanOrEqual(2);
     expect(container.querySelector("s-select").getAttribute("label")).toBe(
       "Producttype (iSelect-template)"
     );

@@ -17,10 +17,12 @@ import { isSoldOut, isBackInStock } from "@/lib/soldImage/detectSoldOut";
 import { getSoldImageState, markPending, markRestoring } from "@/lib/soldImage/stateService";
 import { getSoldImageSettings } from "@/lib/soldImage/settingsService";
 import { processProductNow } from "@/lib/soldImage/soldImageService";
-import { getProduct } from "@/lib/shopify/client";
+import { getProduct, hasPositiveInventory } from "@/lib/shopify/client";
 import { logSync } from "@/lib/logging";
 import { updateLifecycleState } from "@/services/catalog/lifecycleService";
 import { checkProductObjectAndNotify } from "@/services/inventory/notificationService";
+import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
+import { getLinkForShopifyProduct } from "@/lib/goedgeplaatst/service";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -74,6 +76,26 @@ export async function POST(req: NextRequest) {
       const message = err instanceof Error ? err.message : String(err);
       logSync({ shopifyProductId: productId, action: "inventory_notification_error", message }).catch(() => {});
     });
+  }
+
+  // Retries the GoedGeplaatst auto-concept for a product that was skipped
+  // on products/create (e.g. no photos yet at that point — a common
+  // Shopify flow is create-then-add-photos). createConceptAd() is
+  // idempotent on the shopify:<id> link key, so this only ever does
+  // something when there is NOT already a successful concept — an update
+  // on an already-linked product is a cheap no-op DB read, nothing more.
+  if (hasPositiveInventory(product)) {
+    const existingLink = await getLinkForShopifyProduct(productId).catch(() => null);
+    // concept_status="error" rows store goedgeplaatst_ad_id="0" as a
+    // placeholder (truthy string!) — only a genuinely succeeded concept
+    // should skip the retry, otherwise a past failure (e.g. missing photos,
+    // an invalid model name) would block every future retry forever.
+    const hasSucceededBefore = existingLink?.concept_status === "concept" && Number(existingLink.goedgeplaatst_ad_id) > 0;
+    if (!hasSucceededBefore) {
+      await autoCreateGoedgeplaatstConceptAd(productId).catch(() => {
+        /* autoCreateGoedgeplaatstConceptAd already logs its own failures */
+      });
+    }
   }
 
   return NextResponse.json({ ok: true });
