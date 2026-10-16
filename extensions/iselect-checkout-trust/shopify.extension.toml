@@ -1,0 +1,22 @@
+# Learn more about configuring your checkout UI extension:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-10"
+
+[[extensions]]
+name = "iselect-checkout-trust"
+handle = "iselect-checkout-trust"
+type = "ui_extension"
+uid = "f4261a9e-b96a-b6d9-d6b6-211e273d61413a03453a"
+
+# Controls where in Shopify your extension will be injected,
+# and the file that contains your extension’s source code. Learn more:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/targets
+
+[[extensions.targeting]]
+module = "./src/Checkout.jsx"
+target = "purchase.checkout.block.render"
+
+# Static trust badges (warranty / shipping time / reviews) — no API or network access needed.
