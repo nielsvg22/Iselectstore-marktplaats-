@@ -6,10 +6,10 @@ import { act } from "preact/test-utils";
 vi.mock("@shopify/ui-extensions/preact", () => ({}));
 vi.mock("../extensions/shared/api.js", () => ({
   BACKEND_URL: "https://iselectstore-marktplaats-app.vercel.app",
-  getIdToken: vi.fn(), callBackend: vi.fn(), uploadImages: vi.fn(),
+  getIdToken: vi.fn(), callBackend: vi.fn(), uploadImages: vi.fn(), previewImageFile: vi.fn(),
 }));
 import openAction from "../extensions/iselect-quick-create/src/ActionExtension.jsx";
-import { callBackend, getIdToken, uploadImages } from "../extensions/shared/api.js";
+import { callBackend, getIdToken, uploadImages, previewImageFile } from "../extensions/shared/api.js";
 
 const flush = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 const values = { Model: "iPhone 15 Pro", "Opslag (GB)": "256", Kleur: "Zwart", Conditie: "Als nieuw", Verkoopprijs: "569" };
@@ -28,7 +28,10 @@ beforeEach(async () => {
   vi.clearAllMocks();
   globalThis.shopify = { close: vi.fn() };
   getIdToken.mockResolvedValue("test-token");
-  callBackend.mockResolvedValue({ ok: true, data: product });
+  previewImageFile.mockResolvedValue({ preview: "data:image/jpeg;base64,cHJldmlldw==" });
+  callBackend.mockImplementation(async (path) => path === "/api/shopify/quick-review"
+    ? { ok: true, data: { source: "cache", missingMandatory: [], checks: [] } }
+    : { ok: true, data: product });
   uploadImages.mockResolvedValue({ added: 1, error: "" });
   await act(() => openAction());
   for (const [label, value] of Object.entries(values)) {
@@ -66,8 +69,10 @@ describe("Verplichte foto's vóór iSelect-productcreatie", () => {
     uploadImages.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     const file = new File(["jpeg"], "iphone.jpg", { type: "image/jpeg" });
     choose(file);
+    await flush(); submit(); await flush();
+    expect(callBackend.mock.calls.filter(([path]) => path === "/api/shopify/quick-create")).toHaveLength(0);
     submit(); submit(); await flush();
-    expect(callBackend).toHaveBeenCalledTimes(1);
+    expect(callBackend.mock.calls.filter(([path]) => path === "/api/shopify/quick-create")).toHaveLength(1);
     expect(uploadImages).toHaveBeenCalledWith({ token: "test-token", productId: "123", files: [file] });
     expect(document.querySelectorAll("s-drop-zone")).toHaveLength(0);
     expect(document.querySelector('[slot="primary-action"]').hasAttribute("disabled")).toBe(true);
@@ -84,7 +89,7 @@ describe("Verplichte foto's vóór iSelect-productcreatie", () => {
       ? { ok: true, data: { draft: { images: [{ filename: "ai.jpg", dataUrl: "data:image/jpeg;base64,aW1hZ2U=" }], values: {}, updatedAt: Date.now() } } }
       : { ok: true, data: product });
     click([...document.querySelectorAll("s-button")].find((el) => el.textContent.includes("Nu ophalen")));
-    await flush(); submit(); await flush();
+    await flush(); submit(); await flush(); submit(); await flush();
     expect(callBackend).toHaveBeenCalledWith("/api/shopify/quick-image", { token: "test-token", body: { productId: "123", filename: "ai.jpg", data: "aW1hZ2U=" } });
     expect(uploadImages).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("1 foto toegevoegd.");
@@ -94,11 +99,60 @@ describe("Verplichte foto's vóór iSelect-productcreatie", () => {
   it("meldt een uploadfout zonder tweede uploadbox of opnieuw een product aan te maken", async () => {
     uploadImages.mockResolvedValue({ added: 0, error: "Upload mislukt." });
     choose(new File(["jpeg"], "iphone.jpg", { type: "image/jpeg" }));
-    submit(); await flush();
+    await flush(); submit(); await flush(); submit(); await flush();
     expect(document.querySelector('s-banner[tone="warning"]')).toBeTruthy();
     expect(document.body.textContent).toContain("Maak het product niet opnieuw aan.");
     expect(document.querySelectorAll("s-drop-zone")).toHaveLength(0);
     expect(document.querySelector('s-link[href="shopify:admin/products/123"]')).toBeTruthy();
-    expect(callBackend).toHaveBeenCalledTimes(1);
+    expect(callBackend.mock.calls.filter(([path]) => path === "/api/shopify/quick-create")).toHaveLength(1);
+  });
+
+  it("toont miniaturen, verwijdert foto's en uploadt de gekozen hoofdfoto als eerste", async () => {
+    for (const name of ["a.jpg", "b.jpg", "c.jpg"]) choose(new File(["jpeg"], name, { type: "image/jpeg" }));
+    await flush();
+    expect(document.querySelectorAll("s-thumbnail")).toHaveLength(3);
+    click(document.querySelector('[accessibilityLabel="Verwijder foto 2"]'));
+    const mainButtons = [...document.querySelectorAll("s-button")].filter((b) => b.textContent === "Als hoofdfoto");
+    click(mainButtons[1]);
+    await flush();
+    expect([...document.querySelectorAll("s-thumbnail")].map((t) => t.getAttribute("alt"))).toEqual(["Foto 1: c.jpg", "Foto 2: a.jpg"]);
+    click(document.querySelector('[accessibilityLabel="Foto 1 omlaag"]'));
+    click(document.querySelector('[accessibilityLabel="Foto 2 omhoog"]'));
+    submit(); await flush();
+    expect(document.body.textContent).toContain("Prijs: €");
+    expect(document.body.textContent).toContain("569,00");
+    expect(document.body.textContent).toContain("Opslag (GB): 256");
+    expect(callBackend.mock.calls.filter(([path]) => path === "/api/shopify/quick-create")).toHaveLength(0);
+    // Going back keeps the selection and forces a fresh review after edits.
+    click(document.querySelector('[slot="secondary-actions"]'));
+    const price = document.querySelector('s-number-field[label="Verkoopprijs"]');
+    act(() => { price.value = "599"; price.dispatchEvent(new Event("input", { bubbles: true })); });
+    submit(); await flush();
+    expect(document.body.textContent).toContain("599,00");
+    submit(); await flush();
+    expect(uploadImages.mock.calls.map(([arg]) => arg.files[0].name)).toEqual(["c.jpg", "a.jpg"]);
+    expect(callBackend.mock.calls.find(([path]) => path === "/api/shopify/quick-create")[1].body.values.sell_price).toBe("599");
+  });
+
+  it("haalt een verwijderde AI-foto bij opnieuw ophalen niet terug", async () => {
+    callBackend.mockResolvedValue({ ok: true, data: { draft: { images: [{ filename: "ai.jpg", dataUrl: "data:image/jpeg;base64,aW1hZ2U=" }], values: {}, updatedAt: Date.now() } } });
+    const pull = () => click([...document.querySelectorAll("s-button")].find((el) => el.textContent.includes("Nu ophalen")));
+    pull(); await flush();
+    click(document.querySelector('[accessibilityLabel="Verwijder foto 1"]'));
+    pull(); await flush();
+    expect(document.querySelectorAll("s-thumbnail")).toHaveLength(0);
+    submit(); await flush();
+    expect(document.querySelector("s-drop-zone").getAttribute("error")).toContain("Upload minimaal één foto");
+  });
+
+  it("blokkeert controle bij een mislukt voorbeeld en laat alleen dat voorbeeld opnieuw laden", async () => {
+    previewImageFile.mockResolvedValueOnce({ error: "Onleesbare foto" });
+    choose(new File(["jpeg"], "iphone.jpg", { type: "image/jpeg" }));
+    await flush(); submit(); await flush();
+    expect(callBackend).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("Onleesbare foto");
+    click([...document.querySelectorAll("s-button")].find((b) => b.textContent === "Voorbeeld opnieuw laden"));
+    await flush(); submit(); await flush();
+    expect(document.body.textContent).toContain("Controleer je product");
   });
 });

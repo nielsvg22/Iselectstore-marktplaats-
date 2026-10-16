@@ -113,6 +113,44 @@ checken met esbuild (entry = `extensions/*/src/*.jsx`).
 
 ## Deploy
 
+### Fotoselectie en controle vóór aanmaken (16 oktober 2026)
+
+De admin-aanmaakactie heeft één geordende fotolijst voor lokaal gekozen en
+van de AI-pagina opgehaalde foto's (maximaal vijf totaal). Miniaturen hebben
+knoppen voor verwijderen, omhoog/omlaag en **Als hoofdfoto**. Foto 1 wordt
+als eerste naar Shopify verstuurd en wordt daardoor de hoofdfoto. Het
+originele bestand wordt geüpload, niet het verkleinde fotovoorbeeld. De
+afzonderlijke, geauthenticeerde previewroute leest één multipart-bestand van
+maximaal 3 MB en retourneert een JPEG-miniatuur met maximaal 320 px lange
+zijde; de route bewaart niets en maakt geen Shopify-media of producten aan.
+Dit vermijdt de bekende File-leesbeperking in de extension-sandbox.
+
+AI-foto's worden per selectie eenmaal geïmporteerd. Polling maakt verwijderde
+foto's niet opnieuw zichtbaar en overschrijft de gekozen volgorde niet.
+De eerste actieknop is **Controleer product**. Deze opent een momentopname
+van titels, prijs, status, foto-volgorde en ingevulde specificaties. Pas de
+tweede bevestiging maakt een Shopify-product aan. Teruggaan om te bewerken
+bewaart de selectie en vereist daarna opnieuw controle. AI-polling verandert
+een geopend controleoverzicht niet.
+
+De nieuwe geauthenticeerde `/api/shopify/quick-review` hergebruikt de bestaande
+templatevalidatie, titelgenerator, categoriecache, attribuutmapping en
+Marktplaats-preflight. Het overzicht meldt lege templatekenmerken,
+ontbrekende verplichte writable categorieattributen en mappingwaarschuwingen.
+De bron wordt expliciet getoond: live/cache/testgegevens/niet beschikbaar.
+Een cachefout of mock-catalogus wordt nooit als live goedkeuring gepresenteerd.
+Deze controle plaatst geen advertentie. Een Marktplaats-waarschuwing blokkeert
+het afzonderlijk aanmaken van een Shopify-product niet; de definitieve
+advertentiecontrole blijft in het bestaande Marktplaats-scherm.
+
+Tests: `quickCreatePhotos`, `quickPhotoPreview` en `quickReview`. Ze dekken
+onder meer de bevestigingsgrens zonder productcreatie, de echte volgorde van
+uploadcalls, verwijderen en opnieuw ophalen van AI-foto's, wijzigen van de
+prijs na teruggaan, preview-fouten, auth en echte JPEG-decodering. Backend
+eerst via de bestaande GitHub/Vercel-koppeling publiceren; pas zodra de routes
+beschikbaar zijn de Shopify-extensionversie `beheer-photo-review-20261016`
+uitbrengen. Er is geen databasemigratie of nieuwe scope nodig.
+
 ### Verplichte foto in de aanmaakactie (16 oktober 2026)
 
 `iselect-quick-create` blokkeert de aanmaakactie zonder vooraf gekozen foto.
