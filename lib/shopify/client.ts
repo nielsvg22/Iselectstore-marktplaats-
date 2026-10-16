@@ -119,6 +119,21 @@ export async function getProduct(productId: string): Promise<ShopifyProduct> {
   return data.product as ShopifyProduct;
 }
 
+/** The shop's myshopify domain plus any connected custom domains (and which one is primary) — to know which domain to verify for outgoing email. */
+export async function getShopDomainInfo(): Promise<{ myshopifyDomain: string; domains: { host: string; sslEnabled: boolean }[]; primaryDomain: string | null }> {
+  const [shopData, domainsData] = await Promise.all([shopifyFetch("/shop.json"), shopifyFetch("/domains.json")]);
+  const domains = ((domainsData.domains as { host: string; ssl_enabled: boolean; host_is_private: boolean }[]) || []).map((d) => ({
+    host: d.host,
+    sslEnabled: d.ssl_enabled,
+  }));
+  const primary = ((domainsData.domains as { host: string; host_is_private: boolean }[]) || []).find((d) => !d.host_is_private);
+  return {
+    myshopifyDomain: (shopData.shop as { myshopify_domain: string }).myshopify_domain,
+    domains,
+    primaryDomain: primary?.host ?? null,
+  };
+}
+
 /** Creates a product (used by the Admin UI extension quick-create flow). */
 export async function createProduct(product: Record<string, unknown>): Promise<ShopifyProduct> {
   const data = await shopifyFetch("/products.json", {
