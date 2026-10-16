@@ -109,6 +109,48 @@ checken met esbuild (entry = `extensions/*/src/*.jsx`).
 
 ## Deploy
 
+### Dropdowns herstellen (16 oktober 2026)
+
+De categoriegebonden model-, kleur- en schermformaatopties staan al in
+`lib/templates/registry.ts`, gebaseerd op de daar gedocumenteerde
+GoedGeplaatst/Marktplaats-catalogus. Beide adminextensions gebruiken dezelfde
+`extensions/shared/ProductForm.jsx`. Alleen de backend naar Vercel pushen
+werkt dit Shopify-hosted formulier niet bij: de extensions moeten ook via
+Shopify CLI worden gebouwd en uitgebracht.
+
+Selectvelden hebben nu een expliciete lege keuze. Een bestaande ongeldige
+waarde (bijvoorbeeld `Pro` of `16`) blijft zichtbaar als uitgeschakelde keuze
+met de melding dat een geldige optie nodig is. Ze wordt niet stilzwijgend
+vervangen door de eerste optie. De merchant kiest bijvoorbeeld `MacBook Pro`
+en `16 inch`; de bestaande servervalidatie blijft van toepassing. Optionele
+selectvelden kunnen weer worden gewist. Er worden geen bestaande producten
+automatisch aangepast en geen advertenties geplaatst.
+
+Regressie: `__tests__/productDropdowns.test.jsx` controleert alle zes
+producttemplates, de MacBook-keuze vanaf ongeldige oude invoer, de gedeelde
+servervalidatie en het wissen van een optioneel selectveld. Test samen met
+`productFormDom`, `productTemplateSwitchDom`, `quickProduct` en
+`goedgeplaatstMapper`. Shopify `app config validate` en `app build` controleren
+de configuratie en de twee daadwerkelijke extensionbundels. De aparte
+skill-componentvalidator kan in deze omgeving niet draaien doordat zijn
+meegeleverde typesindex ontbreekt (`/tmp/data/types/index.json`).
+
+Voor publicatie is de actuele Beheer-configuratie uit Shopify teruggelezen;
+de bestaande scopes, callbacks en webhookbestemming blijven behouden. De
+vorige actieve versie was `beheer-24`. De geteste opvolger is
+`beheer-dropdowns-20261016`. Controleer na publicatie in Shopify Admin bij
+**Nieuw product via iSelect template** en **iSelect productgegevens**:
+
+- MacBook → Model en Schermformaat zijn dropdowns, onder meer `MacBook Pro`
+  en `16 inch`.
+- Wisselen naar iPad/iPhone/Apple Watch toont de eigen categorieopties.
+- Een optioneel schermformaat kan terug naar **Niet ingevuld**.
+
+Sluit een reeds geopend actieformulier en open het opnieuw om de nieuwe
+Shopify-extensionversie te laden. De release-status kan via CLI worden
+gecontroleerd; interactie met de ingelogde Shopify Admin is niet vanuit deze
+werkomgeving te verifiëren.
+
 1. Backend: commit + push naar
    `https://github.com/nielsvg22/Iselectstore-marktplaats-.git` → Vercel
    (`https://iselectstore-marktplaats-app.vercel.app`).
