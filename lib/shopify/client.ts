@@ -119,18 +119,13 @@ export async function getProduct(productId: string): Promise<ShopifyProduct> {
   return data.product as ShopifyProduct;
 }
 
-/** The shop's myshopify domain plus any connected custom domains (and which one is primary) — to know which domain to verify for outgoing email. */
-export async function getShopDomainInfo(): Promise<{ myshopifyDomain: string; domains: { host: string; sslEnabled: boolean }[]; primaryDomain: string | null }> {
-  const [shopData, domainsData] = await Promise.all([shopifyFetch("/shop.json"), shopifyFetch("/domains.json")]);
-  const domains = ((domainsData.domains as { host: string; ssl_enabled: boolean; host_is_private: boolean }[]) || []).map((d) => ({
-    host: d.host,
-    sslEnabled: d.ssl_enabled,
-  }));
-  const primary = ((domainsData.domains as { host: string; host_is_private: boolean }[]) || []).find((d) => !d.host_is_private);
+/** The shop's myshopify domain and its connected primary (custom) domain — to know which domain to verify for outgoing email. */
+export async function getShopDomainInfo(): Promise<{ myshopifyDomain: string; primaryDomain: string | null }> {
+  const shopData = await shopifyFetch("/shop.json");
+  const shop = shopData.shop as { domain: string; myshopify_domain: string };
   return {
-    myshopifyDomain: (shopData.shop as { myshopify_domain: string }).myshopify_domain,
-    domains,
-    primaryDomain: primary?.host ?? null,
+    myshopifyDomain: shop.myshopify_domain,
+    primaryDomain: shop.domain && shop.domain !== shop.myshopify_domain ? shop.domain : null,
   };
 }
 
