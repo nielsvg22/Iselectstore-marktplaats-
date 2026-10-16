@@ -323,6 +323,19 @@ export async function getMainTheme(): Promise<ShopifyTheme> {
   return main;
 }
 
+export interface ShopifyThemeAsset {
+  key: string;
+  content_type: string;
+  size: number;
+  checksum: string | null;
+}
+
+/** Lists every file key in a given theme (e.g. to diff the live theme against the GitHub-synced copy). */
+export async function listThemeAssets(themeId: number): Promise<ShopifyThemeAsset[]> {
+  const data = await shopifyFetch(`/themes/${themeId}/assets.json`);
+  return (data.assets as ShopifyThemeAsset[]) || [];
+}
+
 /** Raw contents of one file (e.g. "templates/index.json") from a given theme, straight from Shopify — bypasses any GitHub-sync assumptions. */
 export async function getThemeAssetContent(themeId: number, key: string): Promise<string> {
   const data = await shopifyFetch(`/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`);
