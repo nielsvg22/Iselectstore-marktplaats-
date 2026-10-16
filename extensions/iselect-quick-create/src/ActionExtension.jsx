@@ -80,6 +80,8 @@ function QuickCreateAction() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [imageState, setImageState] = useState(null);
+  const [imageError, setImageError] = useState("");
+  const submittingRef = useRef(false);
 
   // Gekoppeld aan de "Haal info op via AI-foto"-link hieronder: dezelfde
   // draftId komt terug op /admin/quick-create, dat herkende velden + foto's
@@ -104,7 +106,18 @@ function QuickCreateAction() {
   // die altijd op beide luistert) — dedupe op bestandsidentiteit zodat dat
   // nooit dubbele entries oplevert.
   function handlePendingFiles(fileList) {
-    const incoming = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
+    if (submittingRef.current) return;
+    const incoming = Array.from(fileList || []);
+    if (incoming.length === 0) return;
+    if (incoming.some((f) => !/\.(jpe?g|png|webp|gif)$/i.test(f.name) || !["image/jpeg", "image/png", "image/webp", "image/gif"].includes(f.type))) {
+      setImageError("Kies een JPG, PNG, WebP of GIF-afbeelding.");
+      return;
+    }
+    if (incoming.some((f) => !f.size || f.size > 3 * 1024 * 1024)) {
+      setImageError("Elke foto moet een geldig bestand van maximaal 3 MB zijn.");
+      return;
+    }
+    setImageError("");
     setPendingFiles((prev) => {
       const known = new Set(prev.map(fileIdentity));
       const added = incoming.filter((f) => !known.has(fileIdentity(f)));
@@ -113,7 +126,7 @@ function QuickCreateAction() {
   }
 
   async function fetchDraft(auto) {
-    if (busy || result) return;
+    if (submittingRef.current || result) return;
     if (!auto) setDraftStatus("Bezig met ophalen…");
     const token = await getIdToken();
     if (!token) {
@@ -124,6 +137,7 @@ function QuickCreateAction() {
       method: "GET",
       token,
     });
+    if (submittingRef.current) return;
     const draft = res.ok ? res.data && res.data.draft : null;
     if (!draft) {
       if (!auto) setDraftStatus("Nog geen gegevens — upload eerst een foto op de AI-pagina.");
@@ -142,6 +156,7 @@ function QuickCreateAction() {
     });
     if (draft.images && draft.images.length > 0) {
       setDraftImages(draft.images);
+      setImageError("");
     }
     setDraftStatus(
       `✓ Bijgewerkt vanaf de AI-pagina (${new Date(draft.updatedAt).toLocaleTimeString("nl-NL")}).`
@@ -155,38 +170,6 @@ function QuickCreateAction() {
     const interval = setInterval(() => fetchDraft(true), 4000);
     return () => clearInterval(interval);
   }, [result, draftId]);
-
-  // Zodra het product is aangemaakt: foto's die via de AI-pagina zijn
-  // opgehaald, EN foto's die rechtstreeks in dit scherm gekozen zijn
-  // (pendingFiles), automatisch meesturen — geen tweede upload-stap nodig.
-  useEffect(() => {
-    if (!result || (draftImages.length === 0 && pendingFiles.length === 0)) return;
-    (async () => {
-      setImageState({ busy: true, message: "" });
-      const token = await getIdToken();
-      if (!token) {
-        setImageState({ busy: false, message: "Kon geen Shopify-sessietoken ophalen voor de foto's." });
-        return;
-      }
-      let added = 0;
-      let error = "";
-      if (draftImages.length > 0) {
-        const uploadedDraft = await uploadDraftImages(token, result.productId, draftImages);
-        added += uploadedDraft.added;
-        if (uploadedDraft.error) error = uploadedDraft.error;
-      }
-      if (!error && pendingFiles.length > 0) {
-        const uploadedLocal = await uploadImages({ token, productId: result.productId, files: pendingFiles });
-        added += uploadedLocal.added;
-        if (uploadedLocal.error) error = uploadedLocal.error;
-      }
-      let message = added > 0 ? `${added} foto${added === 1 ? "" : "'s"} toegevoegd.` : "";
-      if (error) message = message ? `${message} ${error}` : error;
-      setImageState({ busy: false, message });
-      setDraftImages([]);
-      setPendingFiles([]);
-    })();
-  }, [result]);
 
   function handleProductTypeChange(next) {
     setProductType(next);
@@ -206,7 +189,12 @@ function QuickCreateAction() {
   }
 
   async function submit() {
-    if (busy) return;
+    if (submittingRef.current || result) return;
+    if (pendingFiles.length === 0 && draftImages.length === 0) {
+      setImageError("Upload minimaal één foto voordat je het product aanmaakt.");
+      return;
+    }
+    submittingRef.current = true;
     setBusy(true);
     setFormError("");
     try {
@@ -237,52 +225,30 @@ function QuickCreateAction() {
         return;
       }
       setResult(res.data);
+      setImageState({ busy: true, error: false, message: "Foto's worden toegevoegd. Houd dit venster open." });
+      let added = 0;
+      let error = "";
+      try {
+        if (draftImages.length > 0) {
+          const uploaded = await uploadDraftImages(token, res.data.productId, draftImages);
+          added += uploaded.added;
+          error = uploaded.error;
+        }
+        if (!error && pendingFiles.length > 0) {
+          const uploaded = await uploadImages({ token, productId: res.data.productId, files: pendingFiles });
+          added += uploaded.added;
+          error = uploaded.error;
+        }
+      } catch {
+        error = "De foto-upload is onderbroken.";
+      }
+      const message = `${added} foto${added === 1 ? "" : "'s"} toegevoegd.`;
+      setImageState({ busy: false, error: Boolean(error), message: error ? `${message} ${error} Open het bestaande product om de foto's te controleren. Maak het product niet opnieuw aan.` : message });
+    } catch {
+      setFormError("Het aanmaken kon niet worden bevestigd. Controleer eerst het productoverzicht voordat je opnieuw probeert.");
     } finally {
+      submittingRef.current = false;
       setBusy(false);
-    }
-  }
-
-  // state (imageState.busy) is async en kan voor zowel "input" als "change"
-  // nog de oude waarde teruggeven binnen dezelfde tick — een ref is
-  // synchroon en voorkomt dat dezelfde selectie dubbel geüpload wordt.
-  const uploadingRef = useRef(false);
-
-  async function handleFiles(files) {
-    if (!result || !files || files.length === 0) return;
-    if (uploadingRef.current) return;
-    uploadingRef.current = true;
-    setImageState({ busy: true, message: "" });
-    try {
-      const token = await getIdToken();
-      if (!token) {
-        setImageState({
-          busy: false,
-          message: "Kon geen Shopify-sessietoken ophalen.",
-        });
-        return;
-      }
-      const uploaded = await uploadImages({
-        token,
-        productId: result.productId,
-        files,
-      });
-      let message = "";
-      if (uploaded.added > 0) {
-        message = `${uploaded.added} afbeelding${
-          uploaded.added === 1 ? "" : "en"
-        } toegevoegd.`;
-      }
-      if (uploaded.error) {
-        message = message ? `${message} ${uploaded.error}` : uploaded.error;
-      }
-      setImageState({ busy: false, message });
-    } finally {
-      uploadingRef.current = false;
-      setImageState((prev) =>
-        prev && prev.busy
-          ? { busy: false, message: prev.message || "Upload afgebroken." }
-          : prev
-      );
     }
   }
 
@@ -296,7 +262,10 @@ function QuickCreateAction() {
         ) : null}
 
         {result ? (
-          <s-banner tone="success" heading="Product aangemaakt">
+          <s-banner
+            tone={imageState && imageState.error ? "warning" : busy ? "info" : "success"}
+            heading={busy ? "Product aangemaakt — foto's worden toegevoegd" : imageState && imageState.error ? "Product aangemaakt — controleer de foto's" : "Product aangemaakt"}
+          >
             <s-stack direction="block" gap="base">
               <s-text>{result.title}</s-text>
               <s-text>
@@ -310,6 +279,12 @@ function QuickCreateAction() {
               <s-text>
                 Status: {result.status} · voorraad: 1
               </s-text>
+              {imageState ? <s-text>{imageState.message}</s-text> : null}
+              {!busy ? (
+                <s-link href={`shopify:admin/products/${String(result.productId).split("/").pop()}`}>
+                  Open product in Shopify
+                </s-link>
+              ) : null}
             </s-stack>
           </s-banner>
         ) : null}
@@ -338,7 +313,10 @@ function QuickCreateAction() {
                   {draftStatus ? <s-text tone="subdued">{draftStatus}</s-text> : null}
                 </s-stack>
                 <s-stack direction="block" gap="base">
-                  <s-text type="strong">Foto's (optioneel)</s-text>
+                  <s-text type="strong">Foto's (verplicht)</s-text>
+                  {draftImages.length > 0 ? (
+                    <s-text>{draftImages.length} foto{draftImages.length === 1 ? "" : "'s"} vanaf de AI-pagina geselecteerd.</s-text>
+                  ) : null}
                   {pendingFiles.length > 0 ? (
                     <s-text tone="subdued">
                       {pendingFiles.length} foto{pendingFiles.length === 1 ? "" : "'s"} geselecteerd — worden na het aanmaken geüpload.
@@ -347,6 +325,9 @@ function QuickCreateAction() {
                   <s-drop-zone
                     accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
                     multiple
+                    required
+                    disabled={busy}
+                    error={imageError}
                     label="Sleep foto's hierheen of klik om te selecteren (max. 3 MB per bestand, max. 5 foto's)"
                     onInput={(event) => handlePendingFiles(event.currentTarget.files)}
                     onChange={(event) => handlePendingFiles(event.currentTarget.files)}
@@ -356,27 +337,10 @@ function QuickCreateAction() {
             }
           />
         )}
-
-        {result ? (
-          <s-stack direction="block" gap="base">
-            <s-text type="strong">Afbeeldingen toevoegen (optioneel)</s-text>
-            {imageState && imageState.message ? (
-              <s-text>{imageState.message}</s-text>
-            ) : null}
-            <s-drop-zone
-              accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
-              multiple
-              disabled={Boolean(imageState && imageState.busy)}
-              label="Sleep afbeeldingen hierheen of klik om te selecteren (max. 3 MB per bestand)"
-              onInput={(event) => handleFiles(event.currentTarget.files)}
-              onChange={(event) => handleFiles(event.currentTarget.files)}
-            />
-          </s-stack>
-        ) : null}
       </s-stack>
 
       {result ? (
-        <s-button slot="primary-action" onClick={() => shopify.close()}>
+        <s-button slot="primary-action" disabled={busy} onClick={() => { if (!submittingRef.current) shopify.close(); }}>
           Sluiten
         </s-button>
       ) : (
@@ -389,7 +353,7 @@ function QuickCreateAction() {
           Product aanmaken
         </s-button>
       )}
-      <s-button slot="secondary-actions" onClick={() => shopify.close()}>
+      <s-button slot="secondary-actions" disabled={busy} onClick={() => { if (!submittingRef.current) shopify.close(); }}>
         Sluiten
       </s-button>
     </s-admin-action>

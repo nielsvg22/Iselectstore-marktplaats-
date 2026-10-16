@@ -26,7 +26,11 @@ backend (letterlijk dezelfde code, gedeeld via relatieve imports).
 - **Validatie per veld** via `validateQuickProductData()` (verplichte velden,
   getallen, select-opties) — client én server doen dezelfde check.
 - **Status**: concept (draft) of actief (active), standaard `draft`.
-- **Beeldupload** (DropZone) optioneel, direct na create of vanuit het blok.
+- **Foto's verplicht in de aanmaakactie**: selecteer vooraf minstens één foto,
+  rechtstreeks of via de AI-pagina. De gekozen foto's worden automatisch
+  geüpload zodra Shopify het product-ID heeft teruggegeven. Er verschijnt
+  na het aanmaken geen tweede uploadbox. Het bewerkblok voor bestaande
+  producten behoudt zijn uploadmogelijkheid.
 
 ## Backend-endpoints
 
@@ -108,6 +112,28 @@ als die store niet (meer) in de Partner-organisatie staat, koppelen met
 checken met esbuild (entry = `extensions/*/src/*.jsx`).
 
 ## Deploy
+
+### Verplichte foto in de aanmaakactie (16 oktober 2026)
+
+`iselect-quick-create` blokkeert de aanmaakactie zonder vooraf gekozen foto.
+Lege bestanden, niet-ondersteunde formaten en bestanden groter dan 3 MB worden
+niet als selectie geaccepteerd. AI-foto's uit de bestaande draftkoppeling
+tellen ook mee. De foto-overdracht vindt binnen dezelfde submitactie plaats,
+met een synchrone blokkade tegen dubbele submits. De sluitknoppen blijven
+uitgeschakeld totdat de overdracht klaar is. De tweede, optionele uploadbox
+na aanmaken is verwijderd.
+
+Bij een uploadfout verschijnt een waarschuwing en een link naar het reeds
+aangemaakte Shopify-product; het formulier maakt geen tweede product aan.
+De bestaande tweestaps-backend blijft behouden (eerst product-ID, daarna
+foto's). Dit is een verplichte selectie in deze adminactie, geen nieuwe
+serverregel voor andere API-aanmaakflows. Het bestaande productbewerkblok
+is ongewijzigd. Er zijn geen backendwijzigingen nodig.
+
+`__tests__/quickCreatePhotos.test.jsx` controleert ontbrekende/ongeldige
+foto's, AI-foto's, dubbele input/change-events en submits, automatisch
+uploaden, sluitknoppen tijdens overdracht en uploadfouten zonder tweede
+uploadbox. Publicatieversie: `beheer-required-photos-20261016`.
 
 ### Dropdowns herstellen (16 oktober 2026)
 
