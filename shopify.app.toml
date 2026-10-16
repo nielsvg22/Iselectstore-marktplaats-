@@ -9,11 +9,21 @@ embedded = true
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_content,read_products,write_content,write_products,read_inventory,read_themes,write_themes"
+# customer_read_customers/customer_read_orders: klantportaal (Customer Account API — profiel, adressen, bestellingen)
+scopes = "read_content,read_products,write_content,write_products,read_inventory,read_themes,write_themes,customer_read_customers,customer_read_orders"
 
 [auth]
 redirect_urls = [
   "https://iselectstore-marktplaats-app.vercel.app/api/auth/callback"
+]
+
+# Klantportaal: OAuth met PKCE voor de Customer Account API (nieuwe klantaccounts).
+[customer_authentication]
+redirect_uris = [
+  "https://iselectstore-marktplaats-app.vercel.app/portaal/callback"
+]
+logout_urls = [
+  "https://iselectstore-marktplaats-app.vercel.app/portaal"
 ]
 
 [webhooks]
