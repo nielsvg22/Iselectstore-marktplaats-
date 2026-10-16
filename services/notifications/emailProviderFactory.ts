@@ -2,6 +2,7 @@ import { EmailProvider } from "./types";
 import { MockEmailProvider } from "./providers/mockProvider";
 import { ResendEmailProvider } from "./providers/resendProvider";
 import { PostmarkEmailProvider } from "./providers/postmarkProvider";
+import { SmtpEmailProvider } from "./providers/smtpProvider";
 
 export class EmailConfigError extends Error {
   readonly code = "email_not_configured";
@@ -55,7 +56,16 @@ export function assertEmailProviderConfigured(): void {
     return;
   }
 
-  throw new EmailConfigError(`Onbekende EMAIL_PROVIDER: ${provider} (verwacht: resend, postmark of mock).`);
+  if (provider === "smtp") {
+    if (!process.env.SMTP_HOST || !process.env.SMTP_FROM) {
+      throw new EmailConfigError(
+        "EMAIL_PROVIDER=smtp maar SMTP_HOST of SMTP_FROM ontbreekt. Stel ook SMTP_PORT, SMTP_SECURE, SMTP_USER en SMTP_PASS in indien van toepassing."
+      );
+    }
+    return;
+  }
+
+  throw new EmailConfigError(`Onbekende EMAIL_PROVIDER: ${provider} (verwacht: resend, postmark, smtp of mock).`);
 }
 
 export function createEmailProvider(): EmailProvider {
@@ -77,6 +87,21 @@ export function createEmailProvider(): EmailProvider {
         throw new EmailConfigError("EMAIL_PROVIDER=postmark maar POSTMARK_API_KEY of POSTMARK_FROM ontbreekt");
       }
       return new PostmarkEmailProvider(key, from);
+    }
+    case "smtp": {
+      const host = process.env.SMTP_HOST;
+      const from = process.env.SMTP_FROM;
+      if (!host || !from) {
+        throw new EmailConfigError("EMAIL_PROVIDER=smtp maar SMTP_HOST of SMTP_FROM ontbreekt");
+      }
+      return new SmtpEmailProvider({
+        host,
+        port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
+        secure: (process.env.SMTP_SECURE || "").toLowerCase() === "true",
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+        from,
+      });
     }
     case "mock":
       // Guard production against a silent mock before handing back the provider.
