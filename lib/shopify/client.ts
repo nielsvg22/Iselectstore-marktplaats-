@@ -129,6 +129,13 @@ export async function getShopDomainInfo(): Promise<{ myshopifyDomain: string; pr
   };
 }
 
+/** The shop's plan name/display name — to know exactly which Shopify features (e.g. checkout branding, Plus-only APIs) are available. */
+export async function getShopPlan(): Promise<{ planName: string; planDisplayName: string }> {
+  const shopData = await shopifyFetch("/shop.json");
+  const shop = shopData.shop as { plan_name: string; plan_display_name: string };
+  return { planName: shop.plan_name, planDisplayName: shop.plan_display_name };
+}
+
 /** Creates a product (used by the Admin UI extension quick-create flow). */
 export async function createProduct(product: Record<string, unknown>): Promise<ShopifyProduct> {
   const data = await shopifyFetch("/products.json", {
