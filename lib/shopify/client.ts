@@ -519,6 +519,57 @@ export async function updateShippingRatePrice(profileId: string, methodDefinitio
   if (errors.length > 0) throw new Error(`Shopify deliveryProfileUpdate errors: ${JSON.stringify(errors)}`);
 }
 
+export interface CheckoutProfile {
+  id: string;
+  name: string;
+  isPublished: boolean;
+}
+
+/** Lists the shop's checkout profiles — needed to target the published one when setting checkout branding (e.g. the logo). */
+export async function getCheckoutProfiles(): Promise<CheckoutProfile[]> {
+  const data = await shopifyGraphQL<{
+    checkoutProfiles: { edges: { node: CheckoutProfile }[] };
+  }>(`
+    query {
+      checkoutProfiles(first: 10) {
+        edges { node { id name isPublished } }
+      }
+    }
+  `);
+  return data.checkoutProfiles.edges.map((e) => e.node);
+}
+
+/** Sets the logo shown in the checkout header, on the shop's published checkout profile. */
+export async function setCheckoutLogo(mediaImageId: string): Promise<unknown> {
+  const profiles = await getCheckoutProfiles();
+  const profile = profiles.find((p) => p.isPublished) || profiles[0];
+  if (!profile) throw new Error("Geen checkout-profiel gevonden.");
+
+  const data = await shopifyGraphQL<{
+    checkoutBrandingUpsert: { checkoutBranding: unknown; userErrors: { field: string[]; message: string }[] };
+  }>(
+    `mutation upsert($checkoutProfileId: ID!, $checkoutBrandingInput: CheckoutBrandingInput!) {
+      checkoutBrandingUpsert(checkoutProfileId: $checkoutProfileId, checkoutBrandingInput: $checkoutBrandingInput) {
+        checkoutBranding { designSystem { colors { global { brand } } } }
+        userErrors { field message }
+      }
+    }`,
+    {
+      checkoutProfileId: profile.id,
+      checkoutBrandingInput: {
+        customizations: {
+          header: {
+            logo: { image: { mediaImageId } },
+          },
+        },
+      },
+    }
+  );
+  const errors = data.checkoutBrandingUpsert.userErrors;
+  if (errors.length > 0) throw new Error(`checkoutBrandingUpsert errors: ${JSON.stringify(errors)}`);
+  return data.checkoutBrandingUpsert.checkoutBranding;
+}
+
 /**
  * Uploads an image into the shop's Files library (Content → Files), the
  * source image_picker theme settings pick from. Staged-upload flow:
