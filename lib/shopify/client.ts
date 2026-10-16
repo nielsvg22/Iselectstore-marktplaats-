@@ -336,6 +336,18 @@ export async function listThemeAssets(themeId: number): Promise<ShopifyThemeAsse
   return (data.assets as ShopifyThemeAsset[]) || [];
 }
 
+/**
+ * Raw asset read, straight from Shopify's response shape (no lossy decode) —
+ * needed to pull binary files (fonts, images) byte-for-byte when syncing the
+ * live theme back to git; `getThemeAssetContent` below assumes UTF-8 text.
+ */
+export async function getThemeAssetRaw(themeId: number, key: string): Promise<{ value: string | null; attachment: string | null }> {
+  const data = await shopifyFetch(`/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`);
+  const asset = data.asset as { value?: string; attachment?: string } | undefined;
+  if (!asset) throw new Error(`Asset "${key}" niet gevonden op thema ${themeId}.`);
+  return { value: asset.value ?? null, attachment: asset.attachment ?? null };
+}
+
 /** Raw contents of one file (e.g. "templates/index.json") from a given theme, straight from Shopify — bypasses any GitHub-sync assumptions. */
 export async function getThemeAssetContent(themeId: number, key: string): Promise<string> {
   const data = await shopifyFetch(`/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`);
@@ -372,6 +384,129 @@ async function shopifyGraphQL<T = any>(query: string, variables?: Record<string,
     throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
   }
   return json.data as T;
+}
+
+export interface ShopifyDeliveryRate {
+  id: string;
+  name: string;
+  priceAmount: string;
+  priceCurrency: string;
+}
+export interface ShopifyDeliveryZone {
+  id: string;
+  name: string;
+  methodDefinitions: ShopifyDeliveryRate[];
+}
+export interface ShopifyDeliveryProfile {
+  id: string;
+  name: string;
+  zones: ShopifyDeliveryZone[];
+}
+
+/** Reads the shop's delivery profiles (zones + flat-rate shipping methods), to see what's already configured before changing anything. */
+export async function getDeliveryProfiles(): Promise<ShopifyDeliveryProfile[]> {
+  const data = await shopifyGraphQL<{
+    deliveryProfiles: {
+      edges: {
+        node: {
+          id: string;
+          name: string;
+          profileLocationGroups: {
+            locationGroupZones: {
+              edges: {
+                node: {
+                  zone: { id: string; name: string };
+                  methodDefinitions: {
+                    edges: { node: { id: string; name: string; rateProvider: { price?: { amount: string; currencyCode: string } } | null } }[];
+                  };
+                };
+              }[];
+            };
+          }[];
+        };
+      }[];
+    };
+  }>(`
+    query {
+      deliveryProfiles(first: 20) {
+        edges {
+          node {
+            id
+            name
+            profileLocationGroups {
+              locationGroupZones(first: 20) {
+                edges {
+                  node {
+                    zone { id name }
+                    methodDefinitions(first: 20) {
+                      edges {
+                        node {
+                          id
+                          name
+                          rateProvider {
+                            ... on DeliveryRateDefinition { price { amount currencyCode } }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `);
+
+  return data.deliveryProfiles.edges.map((profileEdge) => ({
+    id: profileEdge.node.id,
+    name: profileEdge.node.name,
+    zones: profileEdge.node.profileLocationGroups.flatMap((g) =>
+      g.locationGroupZones.edges.map((z) => ({
+        id: z.node.zone.id,
+        name: z.node.zone.name,
+        methodDefinitions: z.node.methodDefinitions.edges.map((m) => ({
+          id: m.node.id,
+          name: m.node.name,
+          priceAmount: m.node.rateProvider?.price?.amount ?? "",
+          priceCurrency: m.node.rateProvider?.price?.currencyCode ?? "",
+        })),
+      }))
+    ),
+  }));
+}
+
+/** Overwrites the price of one existing flat-rate shipping method (e.g. to set the standard €10,25 rate). */
+export async function updateShippingRatePrice(profileId: string, methodDefinitionId: string, amount: string, currencyCode = "EUR"): Promise<void> {
+  const data = await shopifyGraphQL<{
+    deliveryProfileUpdate: { userErrors: { field: string[]; message: string }[] };
+  }>(
+    `
+    mutation UpdateRate($id: ID!, $profile: DeliveryProfileInput!) {
+      deliveryProfileUpdate(id: $id, profile: $profile) {
+        userErrors { field message }
+      }
+    }
+  `,
+    {
+      id: profileId,
+      profile: {
+        locationGroupsToUpdate: [
+          {
+            methodDefinitionsToUpdate: [
+              {
+                id: methodDefinitionId,
+                rateDefinition: { price: { amount, currencyCode } },
+              },
+            ],
+          },
+        ],
+      },
+    }
+  );
+  const errors = data.deliveryProfileUpdate.userErrors;
+  if (errors.length > 0) throw new Error(`Shopify deliveryProfileUpdate errors: ${JSON.stringify(errors)}`);
 }
 
 /**
