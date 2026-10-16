@@ -99,43 +99,66 @@ export function buildEmailHtml(params: {
   const subject = `Je ${name} is weer op voorraad`;
   const heading = `${name} is weer op voorraad`;
 
-  const imageBlock = imageUrl
-    ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" width="320" style="max-width:320px;height:auto;border-radius:12px;margin:16px 0;display:block;" />`
+  const navy = "#1f3049";
+  const coral = "#f9858b";
+  const coralInk = "#ef6570";
+  const muted = "#6b7280";
+  const line = "#e7e9ec";
+  const soft = "#f7f7f7";
+
+  const imageCell = imageUrl
+    ? `<td width="96" valign="top" style="padding:0 18px 0 0;">
+         <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(name)}" width="96" height="96" style="width:96px;height:96px;object-fit:cover;border-radius:14px;border:1px solid ${line};display:block;" />
+       </td>`
+    : "";
+
+  const priceBadge = priceText
+    ? `<span style="display:inline-block;background:${soft};color:${navy};font-weight:700;font-size:14px;padding:5px 12px;border-radius:980px;margin-top:10px;">${escapeHtml(priceText)}</span>`
     : "";
 
   const ctaBlock = productUrl
-    ? `<p style="margin:24px 0 0;">
-         <a href="${escapeHtml(productUrl)}" style="background:#f9858b;color:#fff;padding:14px 26px;border-radius:980px;text-decoration:none;font-weight:600;display:inline-block;">
-           Bekijk het product
+    ? `<tr><td style="padding:28px 32px 4px;">
+         <a href="${escapeHtml(productUrl)}" style="background:${coral};color:#ffffff;padding:14px 28px;border-radius:980px;text-decoration:none;font-weight:600;font-size:15px;display:inline-block;">
+           Bekijk het product →
          </a>
-       </p>`
-    : "";
-
-  const priceBlock = priceText ? `<p style="margin:12px 0 0;"><strong>Prijs:</strong> ${escapeHtml(priceText)}</p>` : "";
-
-  const linkLine = productUrl
-    ? `<p style="margin:6px 0 0;">Direct bekijken: <a href="${escapeHtml(productUrl)}" style="color:#1f3049;">${escapeHtml(productUrl)}</a></p>`
+       </td></tr>`
     : "";
 
   const html = `
-  <div style="font-family:'Poppins',Arial,Helvetica,sans-serif;color:#1f3049;max-width:520px;margin:0 auto;line-height:1.6;">
-    <div style="font-size:13px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#f9858b;margin-bottom:14px;">
-      iSelectStore
-    </div>
-    <h1 style="font-size:22px;line-height:1.3;margin:0 0 12px;color:#1f3049;">${escapeHtml(heading)}</h1>
-    <p style="margin:0 0 4px;">Hoi,</p>
-    <p style="margin:0 0 4px;">goed nieuws: het toestel waarvoor je je hebt aangemeld is weer beschikbaar:</p>
-    <p style="font-size:18px;font-weight:700;margin:14px 0 0;">${escapeHtml(name)}</p>
-    ${identity.storage ? `<p style="margin:2px 0 0;font-size:14px;color:#6b7280;">Opslag: ${escapeHtml(identity.storage)}</p>` : ""}
-    ${imageBlock}
-    ${priceBlock}
-    ${ctaBlock}
-    <hr style="border:0;border-top:1px solid #e7e9ec;margin:32px 0 16px;" />
-    <p style="font-size:12px;color:#6b7280;margin:0;">
-      Je ontvangt deze melding omdat je je hebt aangemeld voor een voorraadmelding op iSelectStore.
-      We sturen je maar één bericht per product.
-    </p>
-    ${linkLine}
+  <div style="background:${soft};padding:32px 16px;font-family:'Poppins',Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid ${line};">
+      <tr>
+        <td style="background:${navy};padding:22px 32px;">
+          <span style="font-size:13px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${coral};">iSelectStore</span>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:32px 32px 8px;">
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${coralInk};">Weer op voorraad</p>
+          <h1 style="margin:0 0 20px;font-size:21px;line-height:1.35;color:${navy};">${escapeHtml(heading)}</h1>
+          <table role="presentation" cellpadding="0" cellspacing="0">
+            <tr>
+              ${imageCell}
+              <td valign="top">
+                <p style="margin:0;font-size:16px;font-weight:700;color:${navy};">${escapeHtml(name)}</p>
+                ${identity.storage ? `<p style="margin:4px 0 0;font-size:13px;color:${muted};">Opslag: ${escapeHtml(identity.storage)}</p>` : ""}
+                ${priceBadge}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      ${ctaBlock}
+      <tr>
+        <td style="padding:24px 32px 28px;">
+          <hr style="border:0;border-top:1px solid ${line};margin:0 0 18px;" />
+          <p style="font-size:12px;color:${muted};line-height:1.6;margin:0;">
+            Je ontvangt deze melding omdat je je hebt aangemeld voor een voorraadmelding op iSelectStore.
+            We sturen je maar één bericht per product.
+          </p>
+        </td>
+      </tr>
+    </table>
   </div>`;
 
   const text = [
