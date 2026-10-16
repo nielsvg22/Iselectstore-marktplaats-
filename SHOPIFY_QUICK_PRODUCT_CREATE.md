@@ -26,7 +26,11 @@ backend (letterlijk dezelfde code, gedeeld via relatieve imports).
 - **Validatie per veld** via `validateQuickProductData()` (verplichte velden,
   getallen, select-opties) — client én server doen dezelfde check.
 - **Status**: concept (draft) of actief (active), standaard `draft`.
-- **Beeldupload** (DropZone) optioneel, direct na create of vanuit het blok.
+- **Foto's verplicht in de aanmaakactie**: selecteer vooraf minstens één foto,
+  rechtstreeks of via de AI-pagina. De gekozen foto's worden automatisch
+  geüpload zodra Shopify het product-ID heeft teruggegeven. Er verschijnt
+  na het aanmaken geen tweede uploadbox. Het bewerkblok voor bestaande
+  producten behoudt zijn uploadmogelijkheid.
 
 ## Backend-endpoints
 
@@ -108,6 +112,108 @@ als die store niet (meer) in de Partner-organisatie staat, koppelen met
 checken met esbuild (entry = `extensions/*/src/*.jsx`).
 
 ## Deploy
+
+### Fotoselectie en controle vóór aanmaken (16 oktober 2026)
+
+De admin-aanmaakactie heeft één geordende fotolijst voor lokaal gekozen en
+van de AI-pagina opgehaalde foto's (maximaal vijf totaal). Miniaturen hebben
+knoppen voor verwijderen, omhoog/omlaag en **Als hoofdfoto**. Foto 1 wordt
+als eerste naar Shopify verstuurd en wordt daardoor de hoofdfoto. Het
+originele bestand wordt geüpload, niet het verkleinde fotovoorbeeld. De
+afzonderlijke, geauthenticeerde previewroute leest één multipart-bestand van
+maximaal 3 MB en retourneert een JPEG-miniatuur met maximaal 320 px lange
+zijde; de route bewaart niets en maakt geen Shopify-media of producten aan.
+Dit vermijdt de bekende File-leesbeperking in de extension-sandbox.
+
+AI-foto's worden per selectie eenmaal geïmporteerd. Polling maakt verwijderde
+foto's niet opnieuw zichtbaar en overschrijft de gekozen volgorde niet.
+De eerste actieknop is **Controleer product**. Deze opent een momentopname
+van titels, prijs, status, foto-volgorde en ingevulde specificaties. Pas de
+tweede bevestiging maakt een Shopify-product aan. Teruggaan om te bewerken
+bewaart de selectie en vereist daarna opnieuw controle. AI-polling verandert
+een geopend controleoverzicht niet.
+
+De nieuwe geauthenticeerde `/api/shopify/quick-review` hergebruikt de bestaande
+templatevalidatie, titelgenerator, categoriecache, attribuutmapping en
+Marktplaats-preflight. Het overzicht meldt lege templatekenmerken,
+ontbrekende verplichte writable categorieattributen en mappingwaarschuwingen.
+De bron wordt expliciet getoond: live/cache/testgegevens/niet beschikbaar.
+Een cachefout of mock-catalogus wordt nooit als live goedkeuring gepresenteerd.
+Deze controle plaatst geen advertentie. Een Marktplaats-waarschuwing blokkeert
+het afzonderlijk aanmaken van een Shopify-product niet; de definitieve
+advertentiecontrole blijft in het bestaande Marktplaats-scherm.
+
+Tests: `quickCreatePhotos`, `quickPhotoPreview` en `quickReview`. Ze dekken
+onder meer de bevestigingsgrens zonder productcreatie, de echte volgorde van
+uploadcalls, verwijderen en opnieuw ophalen van AI-foto's, wijzigen van de
+prijs na teruggaan, preview-fouten, auth en echte JPEG-decodering. Backend
+eerst via de bestaande GitHub/Vercel-koppeling publiceren; pas zodra de routes
+beschikbaar zijn de Shopify-extensionversie `beheer-photo-review-20261016`
+uitbrengen. Er is geen databasemigratie of nieuwe scope nodig.
+
+### Verplichte foto in de aanmaakactie (16 oktober 2026)
+
+`iselect-quick-create` blokkeert de aanmaakactie zonder vooraf gekozen foto.
+Lege bestanden, niet-ondersteunde formaten en bestanden groter dan 3 MB worden
+niet als selectie geaccepteerd. AI-foto's uit de bestaande draftkoppeling
+tellen ook mee. De foto-overdracht vindt binnen dezelfde submitactie plaats,
+met een synchrone blokkade tegen dubbele submits. De sluitknoppen blijven
+uitgeschakeld totdat de overdracht klaar is. De tweede, optionele uploadbox
+na aanmaken is verwijderd.
+
+Bij een uploadfout verschijnt een waarschuwing en een link naar het reeds
+aangemaakte Shopify-product; het formulier maakt geen tweede product aan.
+De bestaande tweestaps-backend blijft behouden (eerst product-ID, daarna
+foto's). Dit is een verplichte selectie in deze adminactie, geen nieuwe
+serverregel voor andere API-aanmaakflows. Het bestaande productbewerkblok
+is ongewijzigd. Er zijn geen backendwijzigingen nodig.
+
+`__tests__/quickCreatePhotos.test.jsx` controleert ontbrekende/ongeldige
+foto's, AI-foto's, dubbele input/change-events en submits, automatisch
+uploaden, sluitknoppen tijdens overdracht en uploadfouten zonder tweede
+uploadbox. Publicatieversie: `beheer-required-photos-20261016`.
+
+### Dropdowns herstellen (16 oktober 2026)
+
+De categoriegebonden model-, kleur- en schermformaatopties staan al in
+`lib/templates/registry.ts`, gebaseerd op de daar gedocumenteerde
+GoedGeplaatst/Marktplaats-catalogus. Beide adminextensions gebruiken dezelfde
+`extensions/shared/ProductForm.jsx`. Alleen de backend naar Vercel pushen
+werkt dit Shopify-hosted formulier niet bij: de extensions moeten ook via
+Shopify CLI worden gebouwd en uitgebracht.
+
+Selectvelden hebben nu een expliciete lege keuze. Een bestaande ongeldige
+waarde (bijvoorbeeld `Pro` of `16`) blijft zichtbaar als uitgeschakelde keuze
+met de melding dat een geldige optie nodig is. Ze wordt niet stilzwijgend
+vervangen door de eerste optie. De merchant kiest bijvoorbeeld `MacBook Pro`
+en `16 inch`; de bestaande servervalidatie blijft van toepassing. Optionele
+selectvelden kunnen weer worden gewist. Er worden geen bestaande producten
+automatisch aangepast en geen advertenties geplaatst.
+
+Regressie: `__tests__/productDropdowns.test.jsx` controleert alle zes
+producttemplates, de MacBook-keuze vanaf ongeldige oude invoer, de gedeelde
+servervalidatie en het wissen van een optioneel selectveld. Test samen met
+`productFormDom`, `productTemplateSwitchDom`, `quickProduct` en
+`goedgeplaatstMapper`. Shopify `app config validate` en `app build` controleren
+de configuratie en de twee daadwerkelijke extensionbundels. De aparte
+skill-componentvalidator kan in deze omgeving niet draaien doordat zijn
+meegeleverde typesindex ontbreekt (`/tmp/data/types/index.json`).
+
+Voor publicatie is de actuele Beheer-configuratie uit Shopify teruggelezen;
+de bestaande scopes, callbacks en webhookbestemming blijven behouden. De
+vorige actieve versie was `beheer-24`. De geteste opvolger is
+`beheer-dropdowns-20261016`. Controleer na publicatie in Shopify Admin bij
+**Nieuw product via iSelect template** en **iSelect productgegevens**:
+
+- MacBook → Model en Schermformaat zijn dropdowns, onder meer `MacBook Pro`
+  en `16 inch`.
+- Wisselen naar iPad/iPhone/Apple Watch toont de eigen categorieopties.
+- Een optioneel schermformaat kan terug naar **Niet ingevuld**.
+
+Sluit een reeds geopend actieformulier en open het opnieuw om de nieuwe
+Shopify-extensionversie te laden. De release-status kan via CLI worden
+gecontroleerd; interactie met de ingelogde Shopify Admin is niet vanuit deze
+werkomgeving te verifiëren.
 
 1. Backend: commit + push naar
    `https://github.com/nielsvg22/Iselectstore-marktplaats-.git` → Vercel

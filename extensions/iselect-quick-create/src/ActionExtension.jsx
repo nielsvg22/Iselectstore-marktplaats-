@@ -7,7 +7,10 @@ import {
   applyTemplateDefaults,
 } from "../../../lib/templates/quickProduct";
 import { ProductForm } from "../../shared/ProductForm.jsx";
-import { callBackend, uploadImages, getIdToken, BACKEND_URL } from "../../shared/api.js";
+import { callBackend, uploadImages, getIdToken, previewImageFile, BACKEND_URL } from "../../shared/api.js";
+
+import { PhotoSelection } from "../../shared/PhotoSelection.jsx";
+import { ProductReview } from "../../shared/ProductReview.jsx";
 
 function makeDraftId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -80,40 +83,112 @@ function QuickCreateAction() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [imageState, setImageState] = useState(null);
+  const [imageError, setImageError] = useState("");
+  const submittingRef = useRef(false);
 
   // Gekoppeld aan de "Haal info op via AI-foto"-link hieronder: dezelfde
   // draftId komt terug op /admin/quick-create, dat herkende velden + foto's
   // hieronder opslaat zodat dit open formulier ze automatisch overneemt.
   const [draftId] = useState(makeDraftId);
-  const [draftImages, setDraftImages] = useState([]);
+  const [photos, setPhotos] = useState([]);
+  const photosRef = useRef([]);
+  const importedPhotosRef = useRef(new Set());
+  const [review, setReview] = useState(null);
+  const reviewingRef = useRef(null);
+  const [market, setMarket] = useState({ loading: false });
   const [draftStatus, setDraftStatus] = useState("");
 
   // Foto's die de gebruiker vóór het aanmaken rechtstreeks in dit scherm
   // kiest (los van de "Haal info op via AI-foto"-omweg) — pas na het
   // aanmaken geüpload, want /api/shopify/quick-image heeft een bestaande
   // productId nodig.
-  const [pendingFiles, setPendingFiles] = useState([]);
   const MAX_PENDING_FILES = 5;
 
   function fileIdentity(f) {
     return `${f.name}:${f.size}:${f.lastModified}`;
   }
 
-  // s-drop-zone dispatches both an "input" and a "change" event for the
-  // same selection (zelfde patroon als elk ander veld in ProductForm.jsx,
-  // die altijd op beide luistert) — dedupe op bestandsidentiteit zodat dat
-  // nooit dubbele entries oplevert.
+  function updatePhotos(update) {
+    const next = update(photosRef.current);
+    photosRef.current = next;
+    setPhotos(next);
+  }
+
+  async function loadPreview(photo) {
+    updatePhotos((prev) => prev.map((p) => p.id === photo.id ? { ...p, loading: true, error: "" } : p));
+    const result = await previewImageFile(photo.file);
+    updatePhotos((prev) => prev.map((p) => p.id === photo.id ? { ...p, loading: false, preview: result.preview, error: result.error } : p));
+  }
+
   function handlePendingFiles(fileList) {
-    const incoming = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
-    setPendingFiles((prev) => {
-      const known = new Set(prev.map(fileIdentity));
-      const added = incoming.filter((f) => !known.has(fileIdentity(f)));
-      return added.length === 0 ? prev : [...prev, ...added].slice(0, MAX_PENDING_FILES);
+    if (submittingRef.current || reviewingRef.current) return;
+    const incoming = Array.from(fileList || []);
+    if (incoming.length === 0) return;
+    if (incoming.some((f) => !/\.(jpe?g|png|webp|gif)$/i.test(f.name) || !["image/jpeg", "image/png", "image/webp", "image/gif"].includes(f.type))) {
+      setImageError("Kies een JPG, PNG, WebP of GIF-afbeelding.");
+      return;
+    }
+    if (incoming.some((f) => !f.size || f.size > 3 * 1024 * 1024)) {
+      setImageError("Elke foto moet een geldig bestand van maximaal 3 MB zijn.");
+      return;
+    }
+    const added = [];
+    const known = new Set(photosRef.current.map((p) => p.id));
+    for (const file of incoming) {
+      const id = `local:${fileIdentity(file)}`;
+      if (!known.has(id)) { added.push({ id, filename: file.name, file, loading: true }); known.add(id); }
+    }
+    const room = MAX_PENDING_FILES - photosRef.current.length;
+    setImageError(added.length > room ? "Je kunt maximaal 5 foto's kiezen. Verwijder eerst een foto om een andere toe te voegen." : "");
+    const accepted = added.slice(0, Math.max(0, room));
+    updatePhotos((prev) => [...prev, ...accepted]);
+    accepted.forEach(loadPreview);
+  }
+
+  function movePhoto(id, direction) {
+    updatePhotos((prev) => {
+      const from = prev.findIndex((p) => p.id === id);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      [next[from], next[to]] = [next[to], next[from]];
+      return next;
     });
   }
 
+  function makeMain(id) {
+    updatePhotos((prev) => [...prev.filter((p) => p.id === id), ...prev.filter((p) => p.id !== id)]);
+  }
+
+  async function prepareReview() {
+    if (reviewingRef.current || submittingRef.current) return;
+    if (!photosRef.current.length) {
+      setImageError("Upload minimaal één foto voordat je het product aanmaakt.");
+      return;
+    }
+    if (photosRef.current.some((p) => p.loading || p.error)) {
+      setImageError("Wacht tot alle fotovoorbeelden geladen zijn. Verwijder een onleesbare foto of probeer opnieuw.");
+      return;
+    }
+    const validation = validateQuickProductData(productType, values);
+    setIssues(issuesByKey(validation));
+    if (!validation.ok) {
+      setFormError(`Vul de gemarkeerde velden correct in. ${issueSummary(validation)}`);
+      return;
+    }
+    const snapshot = { productType, status, values: validation.values, photos: [...photosRef.current] };
+    reviewingRef.current = snapshot;
+    setReview(snapshot);
+    setFormError("");
+    setMarket({ loading: true });
+    const token = await getIdToken();
+    const check = token ? await callBackend("/api/shopify/quick-review", { token, body: { productType, values: validation.values, imageCount: snapshot.photos.length } }) : null;
+    if (reviewingRef.current !== snapshot) return;
+    setMarket(check?.ok ? { ...check.data, loading: false } : { loading: false, source: "unavailable", message: "De categoriecontrole kon niet worden geladen. Controleer de definitieve kenmerken in Marktplaats controle." });
+  }
+
   async function fetchDraft(auto) {
-    if (busy || result) return;
+    if (submittingRef.current || reviewingRef.current || result) return;
     if (!auto) setDraftStatus("Bezig met ophalen…");
     const token = await getIdToken();
     if (!token) {
@@ -124,6 +199,7 @@ function QuickCreateAction() {
       method: "GET",
       token,
     });
+    if (submittingRef.current || reviewingRef.current) return;
     const draft = res.ok ? res.data && res.data.draft : null;
     if (!draft) {
       if (!auto) setDraftStatus("Nog geen gegevens — upload eerst een foto op de AI-pagina.");
@@ -140,8 +216,18 @@ function QuickCreateAction() {
       }
       return changed ? next : prev;
     });
-    if (draft.images && draft.images.length > 0) {
-      setDraftImages(draft.images);
+    const added = [];
+    for (const image of draft.images || []) {
+      // Import each AI selection once; polling must not resurrect removed
+      // photos or reset the merchant's chosen order/main photo.
+      const id = `ai:${image.filename}:${image.dataUrl}`;
+      if (importedPhotosRef.current.has(id)) continue;
+      importedPhotosRef.current.add(id);
+      if (photosRef.current.length + added.length < MAX_PENDING_FILES) added.push({ id, filename: image.filename, dataUrl: image.dataUrl, preview: image.dataUrl, loading: false });
+    }
+    if (added.length) {
+      updatePhotos((prev) => [...prev, ...added]);
+      setImageError("");
     }
     setDraftStatus(
       `✓ Bijgewerkt vanaf de AI-pagina (${new Date(draft.updatedAt).toLocaleTimeString("nl-NL")}).`
@@ -155,38 +241,6 @@ function QuickCreateAction() {
     const interval = setInterval(() => fetchDraft(true), 4000);
     return () => clearInterval(interval);
   }, [result, draftId]);
-
-  // Zodra het product is aangemaakt: foto's die via de AI-pagina zijn
-  // opgehaald, EN foto's die rechtstreeks in dit scherm gekozen zijn
-  // (pendingFiles), automatisch meesturen — geen tweede upload-stap nodig.
-  useEffect(() => {
-    if (!result || (draftImages.length === 0 && pendingFiles.length === 0)) return;
-    (async () => {
-      setImageState({ busy: true, message: "" });
-      const token = await getIdToken();
-      if (!token) {
-        setImageState({ busy: false, message: "Kon geen Shopify-sessietoken ophalen voor de foto's." });
-        return;
-      }
-      let added = 0;
-      let error = "";
-      if (draftImages.length > 0) {
-        const uploadedDraft = await uploadDraftImages(token, result.productId, draftImages);
-        added += uploadedDraft.added;
-        if (uploadedDraft.error) error = uploadedDraft.error;
-      }
-      if (!error && pendingFiles.length > 0) {
-        const uploadedLocal = await uploadImages({ token, productId: result.productId, files: pendingFiles });
-        added += uploadedLocal.added;
-        if (uploadedLocal.error) error = uploadedLocal.error;
-      }
-      let message = added > 0 ? `${added} foto${added === 1 ? "" : "'s"} toegevoegd.` : "";
-      if (error) message = message ? `${message} ${error}` : error;
-      setImageState({ busy: false, message });
-      setDraftImages([]);
-      setPendingFiles([]);
-    })();
-  }, [result]);
 
   function handleProductTypeChange(next) {
     setProductType(next);
@@ -206,7 +260,9 @@ function QuickCreateAction() {
   }
 
   async function submit() {
-    if (busy) return;
+    if (submittingRef.current || result || !reviewingRef.current || market.loading) return;
+    const { productType, status, values, photos } = reviewingRef.current;
+    submittingRef.current = true;
     setBusy(true);
     setFormError("");
     try {
@@ -237,52 +293,28 @@ function QuickCreateAction() {
         return;
       }
       setResult(res.data);
+      setImageState({ busy: true, error: false, message: "Foto's worden toegevoegd. Houd dit venster open." });
+      let added = 0;
+      let error = "";
+      try {
+        for (const photo of photos) {
+          const uploaded = photo.file
+            ? await uploadImages({ token, productId: res.data.productId, files: [photo.file] })
+            : await uploadDraftImages(token, res.data.productId, [{ filename: photo.filename, dataUrl: photo.dataUrl }]);
+          added += uploaded.added;
+          error = uploaded.error;
+          if (error) break;
+        }
+      } catch {
+        error = "De foto-upload is onderbroken.";
+      }
+      const message = `${added} foto${added === 1 ? "" : "'s"} toegevoegd.`;
+      setImageState({ busy: false, error: Boolean(error), message: error ? `${message} ${error} Open het bestaande product om de foto's te controleren. Maak het product niet opnieuw aan.` : message });
+    } catch {
+      setFormError("Het aanmaken kon niet worden bevestigd. Controleer eerst het productoverzicht voordat je opnieuw probeert.");
     } finally {
+      submittingRef.current = false;
       setBusy(false);
-    }
-  }
-
-  // state (imageState.busy) is async en kan voor zowel "input" als "change"
-  // nog de oude waarde teruggeven binnen dezelfde tick — een ref is
-  // synchroon en voorkomt dat dezelfde selectie dubbel geüpload wordt.
-  const uploadingRef = useRef(false);
-
-  async function handleFiles(files) {
-    if (!result || !files || files.length === 0) return;
-    if (uploadingRef.current) return;
-    uploadingRef.current = true;
-    setImageState({ busy: true, message: "" });
-    try {
-      const token = await getIdToken();
-      if (!token) {
-        setImageState({
-          busy: false,
-          message: "Kon geen Shopify-sessietoken ophalen.",
-        });
-        return;
-      }
-      const uploaded = await uploadImages({
-        token,
-        productId: result.productId,
-        files,
-      });
-      let message = "";
-      if (uploaded.added > 0) {
-        message = `${uploaded.added} afbeelding${
-          uploaded.added === 1 ? "" : "en"
-        } toegevoegd.`;
-      }
-      if (uploaded.error) {
-        message = message ? `${message} ${uploaded.error}` : uploaded.error;
-      }
-      setImageState({ busy: false, message });
-    } finally {
-      uploadingRef.current = false;
-      setImageState((prev) =>
-        prev && prev.busy
-          ? { busy: false, message: prev.message || "Upload afgebroken." }
-          : prev
-      );
     }
   }
 
@@ -296,7 +328,10 @@ function QuickCreateAction() {
         ) : null}
 
         {result ? (
-          <s-banner tone="success" heading="Product aangemaakt">
+          <s-banner
+            tone={imageState && imageState.error ? "warning" : busy ? "info" : "success"}
+            heading={busy ? "Product aangemaakt — foto's worden toegevoegd" : imageState && imageState.error ? "Product aangemaakt — controleer de foto's" : "Product aangemaakt"}
+          >
             <s-stack direction="block" gap="base">
               <s-text>{result.title}</s-text>
               <s-text>
@@ -310,11 +345,17 @@ function QuickCreateAction() {
               <s-text>
                 Status: {result.status} · voorraad: 1
               </s-text>
+              {imageState ? <s-text>{imageState.message}</s-text> : null}
+              {!busy ? (
+                <s-link href={`shopify:admin/products/${String(result.productId).split("/").pop()}`}>
+                  Open product in Shopify
+                </s-link>
+              ) : null}
             </s-stack>
           </s-banner>
         ) : null}
 
-        {result ? null : (
+        {result ? null : review ? <ProductReview review={review} market={market} /> : (
           <ProductForm
             productType={productType}
             onProductTypeChange={handleProductTypeChange}
@@ -338,15 +379,19 @@ function QuickCreateAction() {
                   {draftStatus ? <s-text tone="subdued">{draftStatus}</s-text> : null}
                 </s-stack>
                 <s-stack direction="block" gap="base">
-                  <s-text type="strong">Foto's (optioneel)</s-text>
-                  {pendingFiles.length > 0 ? (
-                    <s-text tone="subdued">
-                      {pendingFiles.length} foto{pendingFiles.length === 1 ? "" : "'s"} geselecteerd — worden na het aanmaken geüpload.
-                    </s-text>
-                  ) : null}
+                  <s-text type="strong">Foto's (verplicht)</s-text>
+                  <s-text>De eerste foto is de hoofdfoto. Verander hieronder de volgorde of verwijder een foto.</s-text>
+                  <PhotoSelection
+                    photos={photos}
+                    onRemove={(id) => updatePhotos((prev) => prev.filter((p) => p.id !== id))}
+                    onMove={movePhoto} onMain={makeMain} onRetry={loadPreview}
+                  />
                   <s-drop-zone
                     accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
                     multiple
+                    required
+                    disabled={busy}
+                    error={imageError}
                     label="Sleep foto's hierheen of klik om te selecteren (max. 3 MB per bestand, max. 5 foto's)"
                     onInput={(event) => handlePendingFiles(event.currentTarget.files)}
                     onChange={(event) => handlePendingFiles(event.currentTarget.files)}
@@ -356,41 +401,28 @@ function QuickCreateAction() {
             }
           />
         )}
-
-        {result ? (
-          <s-stack direction="block" gap="base">
-            <s-text type="strong">Afbeeldingen toevoegen (optioneel)</s-text>
-            {imageState && imageState.message ? (
-              <s-text>{imageState.message}</s-text>
-            ) : null}
-            <s-drop-zone
-              accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
-              multiple
-              disabled={Boolean(imageState && imageState.busy)}
-              label="Sleep afbeeldingen hierheen of klik om te selecteren (max. 3 MB per bestand)"
-              onInput={(event) => handleFiles(event.currentTarget.files)}
-              onChange={(event) => handleFiles(event.currentTarget.files)}
-            />
-          </s-stack>
-        ) : null}
       </s-stack>
 
       {result ? (
-        <s-button slot="primary-action" onClick={() => shopify.close()}>
+        <s-button slot="primary-action" disabled={busy} onClick={() => { if (!submittingRef.current) shopify.close(); }}>
           Sluiten
         </s-button>
       ) : (
         <s-button
           slot="primary-action"
           loading={busy}
-          disabled={busy}
-          onClick={submit}
+          disabled={busy || Boolean(review && market.loading)}
+          onClick={review ? submit : prepareReview}
         >
-          Product aanmaken
+          {review ? status === "active" ? "Aanmaken en publiceren" : "Concept aanmaken" : "Controleer product"}
         </s-button>
       )}
-      <s-button slot="secondary-actions" onClick={() => shopify.close()}>
-        Sluiten
+      <s-button slot="secondary-actions" disabled={busy} onClick={() => {
+        if (submittingRef.current) return;
+        if (review && !result) { reviewingRef.current = null; setReview(null); }
+        else shopify.close();
+      }}>
+        {review && !result ? "Terug naar bewerken" : "Sluiten"}
       </s-button>
     </s-admin-action>
   );

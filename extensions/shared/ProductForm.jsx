@@ -31,9 +31,11 @@ export function ProductField({ field, value, error, onChange }) {
     );
   }
   if (field.kind === "select") {
+    const options = field.options || [];
+    const hasLegacyValue = Boolean(value) && !options.includes(value);
     const handle = (event) => {
       const next = event.currentTarget.value;
-      if (acceptSelectValue(next, value)) onChange(next);
+      if (next !== value && (next === "" || options.includes(next))) onChange(next);
     };
     return (
       <s-select
@@ -45,7 +47,15 @@ export function ProductField({ field, value, error, onChange }) {
         onInput={handle}
         onChange={handle}
       >
-        {(field.options || []).map((option) => (
+        <s-option value="" selected={!value}>
+          {field.required ? "Kies een optie" : "Niet ingevuld"}
+        </s-option>
+        {hasLegacyValue ? (
+          <s-option value={value} selected disabled>
+            {value} — kies een geldige optie
+          </s-option>
+        ) : null}
+        {options.map((option) => (
           <s-option key={option} value={option} selected={value === option}>
             {option}
           </s-option>

@@ -117,3 +117,21 @@ export async function uploadImages({ token, productId, files }) {
   }
   return result;
 }
+
+export async function previewImageFile(file) {
+  const token = await getIdToken();
+  if (!token) return { error: "Kon geen Shopify-sessietoken ophalen." };
+  try {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await fetch(`${BACKEND_URL}/api/shopify/quick-photo-preview`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form,
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.preview) return { error: data.error || "Het fotovoorbeeld kon niet worden geladen." };
+    return { preview: data.preview };
+  } catch {
+    return { error: "Het fotovoorbeeld kon niet worden geladen. Probeer opnieuw." };
+  }
+}
