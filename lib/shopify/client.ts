@@ -325,6 +325,15 @@ export async function setPageTemplate(pageId: number, templateSuffix: string): P
   return data.page as ShopifyPage;
 }
 
+/** Creates a new Shopify page (Online winkel → Pagina's) with the given title/handle/template. */
+export async function createPage(title: string, handle: string, templateSuffix?: string): Promise<ShopifyPage> {
+  const data = await shopifyFetch(`/pages.json`, {
+    method: "POST",
+    body: JSON.stringify({ page: { title, handle, template_suffix: templateSuffix ?? null } }),
+  });
+  return data.page as ShopifyPage;
+}
+
 export interface ShopifyTheme {
   id: number;
   name: string;
