@@ -349,6 +349,12 @@ export async function getMainTheme(): Promise<ShopifyTheme> {
   return main;
 }
 
+/** All themes on the shop (id, name, role) — diagnostic: is the GitHub-connected theme actually the live one? */
+export async function listThemes(): Promise<ShopifyTheme[]> {
+  const data = await shopifyFetch(`/themes.json`);
+  return (data.themes as ShopifyTheme[]) || [];
+}
+
 export interface ShopifyThemeAsset {
   key: string;
   content_type: string;
