@@ -7,7 +7,7 @@ import {
   applyTemplateDefaults,
 } from "../../../lib/templates/quickProduct";
 import { ProductForm } from "../../shared/ProductForm.jsx";
-import { callBackend, uploadImages, getIdToken, previewImageFile, BACKEND_URL } from "../../shared/api.js";
+import { callBackend, uploadImages, getIdToken, BACKEND_URL } from "../../shared/api.js";
 
 import { PhotoSelection } from "../../shared/PhotoSelection.jsx";
 import { ProductReview } from "../../shared/ProductReview.jsx";
@@ -114,12 +114,15 @@ function QuickCreateAction() {
     setPhotos(next);
   }
 
-  async function loadPreview(photo) {
-    updatePhotos((prev) => prev.map((p) => p.id === photo.id ? { ...p, loading: true, error: "" } : p));
-    const result = await previewImageFile(photo.file);
-    updatePhotos((prev) => prev.map((p) => p.id === photo.id ? { ...p, loading: false, preview: result.preview, error: result.error } : p));
-  }
-
+  // Geen losse "fotovoorbeeld"-aanroep meer (was lib/.../api.js:previewImageFile
+  // -> /api/shopify/quick-photo-preview): dat round-trip-naar-de-server-en-
+  // terug bleek herhaaldelijk onbetrouwbaar in de extensie-sandbox (zie git-
+  // historie: blob:/data:-URL's werken hier ook al niet, en er is geen
+  // natively-ondersteunde Shopify-bestandskiezer voor deze schermsoort —
+  // shopify.resourcePicker ondersteunt alleen product/variant/collection).
+  // De bestandsnaam + status is voldoende feedback; de echte foto verschijnt
+  // zodra 'ie na het aanmaken naar Shopify wordt geüpload (uploadImages
+  // hieronder, een al bewezen werkend, ander codepad).
   function handlePendingFiles(fileList) {
     if (submittingRef.current || reviewingRef.current) return;
     const incoming = Array.from(fileList || []);
@@ -136,13 +139,12 @@ function QuickCreateAction() {
     const known = new Set(photosRef.current.map((p) => p.id));
     for (const file of incoming) {
       const id = `local:${fileIdentity(file)}`;
-      if (!known.has(id)) { added.push({ id, filename: file.name, file, loading: true }); known.add(id); }
+      if (!known.has(id)) { added.push({ id, filename: file.name, file, loading: false }); known.add(id); }
     }
     const room = MAX_PENDING_FILES - photosRef.current.length;
     setImageError(added.length > room ? "Je kunt maximaal 5 foto's kiezen. Verwijder eerst een foto om een andere toe te voegen." : "");
     const accepted = added.slice(0, Math.max(0, room));
     updatePhotos((prev) => [...prev, ...accepted]);
-    accepted.forEach(loadPreview);
   }
 
   function movePhoto(id, direction) {
@@ -164,10 +166,6 @@ function QuickCreateAction() {
     if (reviewingRef.current || submittingRef.current) return;
     if (!photosRef.current.length) {
       setImageError("Upload minimaal één foto voordat je het product aanmaakt.");
-      return;
-    }
-    if (photosRef.current.some((p) => p.loading || p.error)) {
-      setImageError("Wacht tot alle fotovoorbeelden geladen zijn. Verwijder een onleesbare foto of probeer opnieuw.");
       return;
     }
     const validation = validateQuickProductData(productType, values);
@@ -384,7 +382,7 @@ function QuickCreateAction() {
                   <PhotoSelection
                     photos={photos}
                     onRemove={(id) => updatePhotos((prev) => prev.filter((p) => p.id !== id))}
-                    onMove={movePhoto} onMain={makeMain} onRetry={loadPreview}
+                    onMove={movePhoto} onMain={makeMain}
                   />
                   <s-drop-zone
                     accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"

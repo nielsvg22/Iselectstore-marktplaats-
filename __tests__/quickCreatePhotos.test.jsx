@@ -9,7 +9,7 @@ vi.mock("../extensions/shared/api.js", () => ({
   getIdToken: vi.fn(), callBackend: vi.fn(), uploadImages: vi.fn(), previewImageFile: vi.fn(),
 }));
 import openAction from "../extensions/iselect-quick-create/src/ActionExtension.jsx";
-import { callBackend, getIdToken, uploadImages, previewImageFile } from "../extensions/shared/api.js";
+import { callBackend, getIdToken, uploadImages } from "../extensions/shared/api.js";
 
 const flush = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 const values = { Model: "iPhone 15 Pro", "Opslag (GB)": "256", Kleur: "Zwart", Conditie: "Als nieuw", Verkoopprijs: "569" };
@@ -28,7 +28,6 @@ beforeEach(async () => {
   vi.clearAllMocks();
   globalThis.shopify = { close: vi.fn() };
   getIdToken.mockResolvedValue("test-token");
-  previewImageFile.mockResolvedValue({ preview: "data:image/jpeg;base64,cHJldmlldw==" });
   callBackend.mockImplementation(async (path) => path === "/api/shopify/quick-review"
     ? { ok: true, data: { source: "cache", missingMandatory: [], checks: [] } }
     : { ok: true, data: product });
@@ -107,15 +106,20 @@ describe("Verplichte foto's vóór iSelect-productcreatie", () => {
     expect(callBackend.mock.calls.filter(([path]) => path === "/api/shopify/quick-create")).toHaveLength(1);
   });
 
-  it("toont miniaturen, verwijdert foto's en uploadt de gekozen hoofdfoto als eerste", async () => {
+  it("toont bestandsnamen, verwijdert foto's en uploadt de gekozen hoofdfoto als eerste", async () => {
     for (const name of ["a.jpg", "b.jpg", "c.jpg"]) choose(new File(["jpeg"], name, { type: "image/jpeg" }));
     await flush();
-    expect(document.querySelectorAll("s-thumbnail")).toHaveLength(3);
+    // Lokaal gekozen bestanden tonen geen thumbnail (geen betrouwbare preview
+    // in de extensie-sandbox) — alleen de bestandsnaam, per positie.
+    expect(document.body.textContent).toContain("1. a.jpg");
+    expect(document.body.textContent).toContain("2. b.jpg");
+    expect(document.body.textContent).toContain("3. c.jpg");
     click(document.querySelector('[accessibilityLabel="Verwijder foto 2"]'));
     const mainButtons = [...document.querySelectorAll("s-button")].filter((b) => b.textContent === "Als hoofdfoto");
     click(mainButtons[1]);
     await flush();
-    expect([...document.querySelectorAll("s-thumbnail")].map((t) => t.getAttribute("alt"))).toEqual(["Foto 1: c.jpg", "Foto 2: a.jpg"]);
+    expect(document.body.textContent).toContain("1. c.jpg");
+    expect(document.body.textContent).toContain("2. a.jpg");
     click(document.querySelector('[accessibilityLabel="Foto 1 omlaag"]'));
     click(document.querySelector('[accessibilityLabel="Foto 2 omhoog"]'));
     submit(); await flush();
@@ -143,16 +147,5 @@ describe("Verplichte foto's vóór iSelect-productcreatie", () => {
     expect(document.querySelectorAll("s-thumbnail")).toHaveLength(0);
     submit(); await flush();
     expect(document.querySelector("s-drop-zone").getAttribute("error")).toContain("Upload minimaal één foto");
-  });
-
-  it("blokkeert controle bij een mislukt voorbeeld en laat alleen dat voorbeeld opnieuw laden", async () => {
-    previewImageFile.mockResolvedValueOnce({ error: "Onleesbare foto" });
-    choose(new File(["jpeg"], "iphone.jpg", { type: "image/jpeg" }));
-    await flush(); submit(); await flush();
-    expect(callBackend).not.toHaveBeenCalled();
-    expect(document.body.textContent).toContain("Onleesbare foto");
-    click([...document.querySelectorAll("s-button")].find((b) => b.textContent === "Voorbeeld opnieuw laden"));
-    await flush(); submit(); await flush();
-    expect(document.body.textContent).toContain("Controleer je product");
   });
 });
