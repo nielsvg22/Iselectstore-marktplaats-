@@ -298,6 +298,10 @@ export async function deleteProductImage(productId: string, imageId: number): Pr
   await shopifyFetch(`/products/${productId}/images/${imageId}.json`, { method: "DELETE" });
 }
 
+export async function deleteProduct(productId: string): Promise<void> {
+  await shopifyFetch(`/products/${productId}.json`, { method: "DELETE" });
+}
+
 export interface ShopifyPage {
   id: number;
   title: string;
