@@ -1,4 +1,10 @@
-export const BACKEND_URL = "https://iselectstore-marktplaats-app.vercel.app";
+// Was hardcoded to the Vercel deployment — but the app's live backend
+// (webhooks, this admin extension's own API routes) has since moved to
+// Coolify (see Dockerfile / MARKTPLAATS_INTEGRATION.md). The extension kept
+// calling the stale Vercel URL, which is why photo previews/uploads from
+// here could fail even though the same route worked fine when tested
+// directly against Coolify.
+export const BACKEND_URL = "https://ucwekluofewm5m92pdptoxbh.85.190.105.138.sslip.io";
 
 export function toNumericId(id) {
   const raw = String(id || "").trim();
@@ -126,12 +132,26 @@ export async function previewImageFile(file) {
     form.append("file", file, file.name);
     const response = await fetch(`${BACKEND_URL}/api/shopify/quick-photo-preview`, {
       method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form,
-      signal: AbortSignal.timeout(20000),
+      // 45s, not 20s: a slow mobile upload can legitimately take longer
+      // than 20s round-trip — that used to abort and surface as a generic,
+      // indistinguishable-from-a-real-bug failure.
+      signal: AbortSignal.timeout(45000),
     });
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseErr) {
+      // A non-JSON response (proxy error page, etc.) used to be
+      // indistinguishable from "the photo itself is unreadable" — log the
+      // real cause so a repeat failure is diagnosable from the browser console.
+      console.error("previewImageFile: non-JSON response", response.status, parseErr);
+      return { error: `Het fotovoorbeeld kon niet worden geladen (serverfout ${response.status}). Probeer opnieuw.` };
+    }
     if (!response.ok || !data.preview) return { error: data.error || "Het fotovoorbeeld kon niet worden geladen." };
     return { preview: data.preview };
-  } catch {
-    return { error: "Het fotovoorbeeld kon niet worden geladen. Probeer opnieuw." };
+  } catch (err) {
+    console.error("previewImageFile failed:", err);
+    const timedOut = err instanceof Error && err.name === "TimeoutError";
+    return { error: timedOut ? "Het laden van dit fotovoorbeeld duurde te lang. Probeer opnieuw." : "Het fotovoorbeeld kon niet worden geladen. Probeer opnieuw." };
   }
 }

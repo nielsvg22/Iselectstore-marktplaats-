@@ -36,7 +36,11 @@ export async function POST(req: NextRequest) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
     return NextResponse.json({ preview: `data:image/jpeg;base64,${canvas.toBuffer("image/jpeg").toString("base64")}` }, { headers });
-  } catch {
+  } catch (err) {
+    // Previously silent — a repeat "kon niet worden geladen" report had
+    // nothing to go on. Logging the real cause (decode failure, OOM, etc.)
+    // here makes the next one diagnosable from the Coolify runtime logs.
+    console.error("quick-photo-preview failed:", err instanceof Error ? err.stack || err.message : err);
     return NextResponse.json({ error: "De foto kon niet worden gelezen. Kies een andere foto of probeer opnieuw." }, { status: 400, headers });
   }
 }
