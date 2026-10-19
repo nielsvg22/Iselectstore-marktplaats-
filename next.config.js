@@ -12,7 +12,8 @@ const nextConfig = {
     // automatic file tracing can miss assets loaded relative to __dirname
     // once a route is bundled into a single file.
     outputFileTracingIncludes: {
-      "/api/webhooks/products-update": ["./lib/soldImage/assets/**"],
+      "/api/webhooks/products-update": ["./lib/soldImage/assets/**", "./lib/watermark/assets/**"],
+      "/api/webhooks/products-create": ["./lib/watermark/assets/**"],
       "/api/cron/daily": ["./lib/soldImage/assets/**"],
     },
   },

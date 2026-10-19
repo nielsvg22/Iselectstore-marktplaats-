@@ -179,6 +179,28 @@ CREATE TABLE IF NOT EXISTS sold_image_state (
 );
 
 -- =============================================================================
+-- Watermerk (nieuw)
+-- =============================================================================
+
+-- One row per *watermarked* image id (not per product — a product gains new
+-- image ids over its lifetime as photos are added). Also used to record a
+-- failed attempt, keyed by the *original* image id, so a broken image isn't
+-- retried on every single products/update webhook forever (see
+-- lib/watermark/stateService.ts's retry cooldown).
+CREATE TABLE IF NOT EXISTS watermarked_images (
+  shopify_image_id VARCHAR(64) PRIMARY KEY,
+  shopify_product_id VARCHAR(64) NOT NULL,
+  original_image_id VARCHAR(64),
+  original_image_src TEXT,
+  status VARCHAR(50) NOT NULL DEFAULT 'applied',
+  applied_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_watermarked_images_product ON watermarked_images (shopify_product_id);
+
+-- =============================================================================
 -- Voorraadmeldingen (nieuw)
 -- =============================================================================
 

@@ -17,6 +17,7 @@ import { isSoldOut, isBackInStock } from "@/lib/soldImage/detectSoldOut";
 import { getSoldImageState, markPending, markRestoring } from "@/lib/soldImage/stateService";
 import { getSoldImageSettings } from "@/lib/soldImage/settingsService";
 import { processProductNow } from "@/lib/soldImage/soldImageService";
+import { watermarkProductImages } from "@/lib/watermark/watermarkService";
 import { getProduct, hasPositiveInventory } from "@/lib/shopify/client";
 import { logSync } from "@/lib/logging";
 import { updateLifecycleState } from "@/services/catalog/lifecycleService";
@@ -63,6 +64,16 @@ export async function POST(req: NextRequest) {
   // the webhook response — the daily cron picks up anything left pending.
   // Errors are already logged inside processProductNow/soldImageService.
   await processProductNow(productId).catch(() => {});
+
+  // Watermark any photo that was added/changed since the last delivery.
+  // Runs before the GoedGeplaatst concept-ad sync below so that sync picks
+  // up watermarked images, not pre-watermark originals. Idempotent (skips
+  // already-watermarked image ids) and never fails the webhook — errors are
+  // logged per-image inside watermarkProductImages.
+  await watermarkProductImages(productId, product).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logSync({ shopifyProductId: productId, action: "watermark_error", message }).catch(() => {});
+  });
 
   // Update sold_at / lifecycle state. Errors are logged but never fail the webhook.
   await updateLifecycleState(product).catch((err) => {

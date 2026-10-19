@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyShopifyWebhookHmac } from "@/lib/soldImage/webhookAuth";
 import { getProduct, hasPositiveInventory, getCustomFields, setProductSeo } from "@/lib/shopify/client";
 import { buildSeoTitle, buildSeoDescription } from "@/lib/shopify/seo";
+import { watermarkProductImages } from "@/lib/watermark/watermarkService";
 import { logSync } from "@/lib/logging";
 import { updateLifecycleState } from "@/services/catalog/lifecycleService";
 import { checkProductObjectAndNotify } from "@/services/inventory/notificationService";
@@ -43,6 +44,14 @@ export async function POST(req: NextRequest) {
   await updateLifecycleState(product).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     logSync({ shopifyProductId: productId, action: "lifecycle_update_error", message }).catch(() => {});
+  });
+
+  // Covers the (uncommon) case a product is created with photos already
+  // attached. The usual create-then-add-photos flow is handled by the same
+  // call in products-update. Idempotent, never fails the webhook.
+  await watermarkProductImages(productId, product).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logSync({ shopifyProductId: productId, action: "watermark_error", message }).catch(() => {});
   });
 
   if (hasPositiveInventory(product)) {
