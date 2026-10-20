@@ -22,6 +22,33 @@ export async function getWatermarkedImageIds(imageIds: string[]): Promise<Set<st
   return new Set(rows.map((r) => r.shopify_image_id));
 }
 
+const WATERMARK_RETRY_COOLDOWN_MINUTES = 60;
+
+/**
+ * Atomically claims an *original* image id for processing, keyed by that id
+ * specifically (not the eventual watermarked image's id, which doesn't
+ * exist yet) — this is the lock that was missing: Shopify commonly fires
+ * products/update more than once in quick succession for the same edit, and
+ * without a claim here, two concurrent deliveries would both pass a plain
+ * "not yet watermarked" check before either had written its result,
+ * independently watermark the same source image, and leave two duplicate
+ * uploads on the product. Only one caller gets `true`; everyone else
+ * (another in-flight attempt, or a past success/still-cooling-down failure)
+ * gets `false` and must skip.
+ */
+export async function claimImageForWatermarking(originalImageId: string, shopifyProductId: string): Promise<boolean> {
+  const rows = await query<StateRow>(
+    `INSERT INTO watermarked_images (shopify_image_id, shopify_product_id, status)
+     VALUES ($1, $2, 'processing')
+     ON CONFLICT (shopify_image_id) DO UPDATE SET
+       status = 'processing', updated_at = now()
+       WHERE watermarked_images.status = 'error' AND watermarked_images.updated_at <= now() - ($3 || ' minutes')::interval
+     RETURNING shopify_image_id`,
+    [originalImageId, shopifyProductId, WATERMARK_RETRY_COOLDOWN_MINUTES]
+  );
+  return rows.length > 0;
+}
+
 export async function markWatermarked(shopifyImageId: string, shopifyProductId: string, originalImageId: string, originalImageSrc: string): Promise<void> {
   await query(
     `INSERT INTO watermarked_images (shopify_image_id, shopify_product_id, original_image_id, original_image_src, status, applied_at)
@@ -43,19 +70,6 @@ export async function markWatermarkError(originalImageId: string, shopifyProduct
        status = 'error', last_error = $3, updated_at = now()`,
     [originalImageId, shopifyProductId, message]
   );
-}
-
-const WATERMARK_RETRY_COOLDOWN_MINUTES = 60;
-
-/** Original image ids that failed recently and shouldn't be retried on every webhook delivery until the cooldown passes. */
-export async function getRecentlyFailedImageIds(imageIds: string[]): Promise<Set<string>> {
-  if (imageIds.length === 0) return new Set();
-  const rows = await query<StateRow>(
-    `SELECT shopify_image_id FROM watermarked_images
-     WHERE shopify_image_id = ANY($1::text[]) AND status = 'error' AND updated_at > now() - ($2 || ' minutes')::interval`,
-    [imageIds, WATERMARK_RETRY_COOLDOWN_MINUTES]
-  );
-  return new Set(rows.map((r) => r.shopify_image_id));
 }
 
 export type { WatermarkStatus };

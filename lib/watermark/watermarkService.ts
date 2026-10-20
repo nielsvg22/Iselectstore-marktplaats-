@@ -7,8 +7,16 @@
 // that way for the product's lifetime, so state tracking only needs to
 // remember "done" (and "recently failed", to avoid hammering a broken image
 // on every products/update delivery).
+//
+// Shopify commonly delivers products/update more than once in quick
+// succession for a single edit. Each candidate image is therefore claimed
+// atomically (claimImageForWatermarking) before any work starts — the DB
+// is the lock, not an in-memory check — otherwise two near-simultaneous
+// deliveries both pass a plain "not yet watermarked" read before either
+// writes its result, and each independently watermarks the same source
+// image, leaving a duplicate upload on the product.
 import { getProduct, addProductImage, setImagePosition, deleteProductImage, ShopifyImage, ShopifyProduct } from "../shopify/client";
-import { getWatermarkedImageIds, getRecentlyFailedImageIds, markWatermarked, markWatermarkError } from "./stateService";
+import { getWatermarkedImageIds, claimImageForWatermarking, markWatermarked, markWatermarkError } from "./stateService";
 import { applyWatermark } from "./overlay";
 import { logSync } from "../logging";
 
@@ -45,8 +53,9 @@ async function watermarkOneImage(productId: string, image: ShopifyImage): Promis
   await markWatermarked(String(newImage.id), productId, String(image.id), image.src);
 }
 
-/** Watermarks every not-yet-watermarked image on a product. Safe to call repeatedly (e.g. on every
- * products/update webhook) — already-watermarked and recently-failed images are skipped. */
+/** Watermarks every not-yet-watermarked image on a product. Safe to call concurrently and repeatedly
+ * (e.g. on every products/update webhook, including near-simultaneous deliveries for the same edit) —
+ * each image is atomically claimed before processing, so only one caller ever actually watermarks it. */
 export async function watermarkProductImages(productId: string, product?: ShopifyProduct): Promise<{ processed: number; skipped: number; errors: number }> {
   const resolvedProduct = product ?? (await getProduct(productId));
   const candidates = resolvedProduct.images.filter((img) => !shouldSkipByFilename(img.src));
@@ -54,7 +63,10 @@ export async function watermarkProductImages(productId: string, product?: Shopif
   if (candidates.length === 0) return { processed: 0, skipped: 0, errors: 0 };
 
   const candidateIds = candidates.map((img) => String(img.id));
-  const [alreadyDone, recentlyFailed] = await Promise.all([getWatermarkedImageIds(candidateIds), getRecentlyFailedImageIds(candidateIds)]);
+  // Cheap bulk pre-filter for the common case (a re-delivered webhook for a
+  // product that's already fully watermarked) — not required for
+  // correctness, the per-image claim below is what actually prevents races.
+  const alreadyDone = await getWatermarkedImageIds(candidateIds);
 
   let processed = 0;
   let errors = 0;
@@ -62,7 +74,13 @@ export async function watermarkProductImages(productId: string, product?: Shopif
 
   for (const image of candidates) {
     const id = String(image.id);
-    if (alreadyDone.has(id) || recentlyFailed.has(id)) {
+    if (alreadyDone.has(id)) {
+      skipped++;
+      continue;
+    }
+
+    const claimed = await claimImageForWatermarking(id, productId);
+    if (!claimed) {
       skipped++;
       continue;
     }
