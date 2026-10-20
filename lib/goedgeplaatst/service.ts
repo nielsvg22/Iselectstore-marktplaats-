@@ -12,6 +12,7 @@ import {
   GoedgeplaatstAd,
   GoedgeplaatstAddImagesInput,
   GoedgeplaatstAddImagesResult,
+  GoedgeplaatstReplaceImagesInput,
   GoedgeplaatstCategoryAttributes,
   GoedgeplaatstCategoryGroup,
   GoedgeplaatstStatus,
@@ -340,11 +341,24 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
     if (mock) {
       imagesAdded = imageUrls.length;
     } else {
+      // force + an already-existing ad = an explicit re-sync (e.g. the
+      // product's Shopify photos were watermarked after the ad was first
+      // created) — use the REPLACE variant so the stale pre-watermark
+      // images actually get swapped out, not piled on top of. First-time
+      // creation still uses the ADD variant: there's nothing to replace yet,
+      // and PUT /images/<adId> is the only one of the two documented
+      // endpoints guaranteed to work against a brand-new, image-less ad.
+      const isResync = Boolean(params.force) && hasSucceededBefore;
+      const apiOperation = isResync ? "POST /images/" : `PUT /images/${adId}`;
       try {
-        const body: GoedgeplaatstAddImagesInput = { images: imageUrls.map((url, i) => ({ counter: i, image: { url } })) };
-        // PUT /images/<adId> ADDS images without replacing — see config.ts
-        // header comment for why this (not POST /images/) is the right call.
-        const result = await goedgeplaatstRequest<GoedgeplaatstAddImagesResult>("PUT", `images/${adId}`, body);
+        let result: GoedgeplaatstAddImagesResult;
+        if (isResync) {
+          const body: GoedgeplaatstReplaceImagesInput = { adId, images: imageUrls.map((url, i) => ({ counter: i, image: { url } })) };
+          result = await goedgeplaatstRequest<GoedgeplaatstAddImagesResult>("POST", "images/", body);
+        } else {
+          const body: GoedgeplaatstAddImagesInput = { images: imageUrls.map((url, i) => ({ counter: i, image: { url } })) };
+          result = await goedgeplaatstRequest<GoedgeplaatstAddImagesResult>("PUT", `images/${adId}`, body);
+        }
         imagesAdded = result.images?.length ?? 0;
       } catch (err) {
         // Images failing to attach must not roll back an already-created
@@ -353,8 +367,8 @@ export async function createConceptAd(params: CreateConceptAdParams): Promise<Cr
           linkKey: params.linkKey,
           shopifyProductId: params.shopifyProductId ?? undefined,
           goedgeplaatstAdId: adId,
-          action: "add_images",
-          apiOperation: `PUT /images/${adId}`,
+          action: isResync ? "resync_images" : "add_images",
+          apiOperation,
           result: "error",
           message: err instanceof Error ? err.message : String(err),
         });

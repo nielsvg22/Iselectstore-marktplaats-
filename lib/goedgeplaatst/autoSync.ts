@@ -21,8 +21,17 @@ import { logGoedgeplaatstSync } from "./logging";
  *  - best-effort: a product type with no GoedGeplaatst category mapping, a
  *    failed validation, or an API error is logged and swallowed here —
  *    never breaks the webhook response the rest of the route depends on.
+ *
+ * `forceImageResync`: when true and the product is already linked, pushes
+ * the CURRENT Shopify image set to GoedGeplaatst via createConceptAd's
+ * force path (POST /images/, replacing rather than adding) instead of the
+ * normal no-op-on-already-linked short circuit. Used by the webhook handler
+ * right after watermarkProductImages actually changed something on an
+ * already-synced product — otherwise a product's GoedGeplaatst ad would
+ * keep showing its pre-watermark photos forever, since nothing else ever
+ * re-visits an already-linked product's images.
  */
-export async function autoCreateGoedgeplaatstConceptAd(shopifyProductId: string): Promise<void> {
+export async function autoCreateGoedgeplaatstConceptAd(shopifyProductId: string, options?: { forceImageResync?: boolean }): Promise<void> {
   try {
     const preview = await buildProductPreview(shopifyProductId);
 
@@ -46,12 +55,12 @@ export async function autoCreateGoedgeplaatstConceptAd(shopifyProductId: string)
     }
 
     const linkKey = `shopify:${shopifyProductId}`;
-    const result = await createConceptAd({ linkKey, shopifyProductId, categoryId, preview });
+    const result = await createConceptAd({ linkKey, shopifyProductId, categoryId, preview, force: options?.forceImageResync });
     await logGoedgeplaatstSync({
       linkKey,
       shopifyProductId,
       goedgeplaatstAdId: result.adId,
-      action: "auto_create_concept_ad",
+      action: options?.forceImageResync ? "auto_resync_images" : "auto_create_concept_ad",
       result: "ok",
       message: result.reused ? "Al gekoppeld — bestaand concept hergebruikt." : `Concept automatisch aangemaakt${result.mock ? " (mock)" : ""}.`,
     });

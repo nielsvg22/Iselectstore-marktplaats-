@@ -70,9 +70,10 @@ export async function POST(req: NextRequest) {
   // up watermarked images, not pre-watermark originals. Idempotent (skips
   // already-watermarked image ids) and never fails the webhook — errors are
   // logged per-image inside watermarkProductImages.
-  await watermarkProductImages(productId, product).catch((err) => {
+  const watermarkResult = await watermarkProductImages(productId, product).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     logSync({ shopifyProductId: productId, action: "watermark_error", message }).catch(() => {});
+    return null;
   });
 
   // Update sold_at / lifecycle state. Errors are logged but never fail the webhook.
@@ -94,7 +95,11 @@ export async function POST(req: NextRequest) {
   // Shopify flow is create-then-add-photos). createConceptAd() is
   // idempotent on the shopify:<id> link key, so this only ever does
   // something when there is NOT already a successful concept — an update
-  // on an already-linked product is a cheap no-op DB read, nothing more.
+  // on an already-linked product is a cheap no-op DB read, nothing more...
+  // UNLESS this delivery's watermarking above actually changed a photo, in
+  // which case the already-linked ad is still showing a stale, pre-
+  // watermark image forever otherwise (nothing else ever re-visits an
+  // already-linked product) — that case forces a real image resync.
   if (hasPositiveInventory(product)) {
     const existingLink = await getLinkForShopifyProduct(productId).catch(() => null);
     // concept_status="error" rows store goedgeplaatst_ad_id="0" as a
@@ -104,6 +109,10 @@ export async function POST(req: NextRequest) {
     const hasSucceededBefore = existingLink?.concept_status === "concept" && Number(existingLink.goedgeplaatst_ad_id) > 0;
     if (!hasSucceededBefore) {
       await autoCreateGoedgeplaatstConceptAd(productId).catch(() => {
+        /* autoCreateGoedgeplaatstConceptAd already logs its own failures */
+      });
+    } else if (watermarkResult && watermarkResult.processed > 0) {
+      await autoCreateGoedgeplaatstConceptAd(productId, { forceImageResync: true }).catch(() => {
         /* autoCreateGoedgeplaatstConceptAd already logs its own failures */
       });
     }

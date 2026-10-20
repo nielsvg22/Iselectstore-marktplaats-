@@ -118,6 +118,14 @@ export interface GoedgeplaatstAddImagesResult {
   images: { adImageId?: number; url?: string; thumbnail?: string }[];
 }
 
+/** POST /images/ request body — REPLACES all images on the ad (see config.ts header comment). Only
+ * used for an explicit re-sync (force=true) of an already-created ad, e.g. after Shopify photos were
+ * watermarked post-creation — never for first-time creation, which still uses the ADD variant above. */
+export interface GoedgeplaatstReplaceImagesInput {
+  adId: number;
+  images: GoedgeplaatstImageInput[];
+}
+
 export interface GoedgeplaatstCategory {
   categoryId: number;
   descriptions: { locale: string; description: string }[];
