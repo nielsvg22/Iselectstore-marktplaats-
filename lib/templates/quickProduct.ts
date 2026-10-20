@@ -71,7 +71,10 @@ function validateValue(
   if (kind === "number" && !NUMBER_RE.test(value)) {
     return { key, message: `${label} moet een getal zijn.` };
   }
-  if (kind === "select" && options && !options.includes(value)) {
+  // Een number-veld kan ook een beperkte waardenset hebben (dropdown i.p.v.
+  // vrij getal) — zie FIELD_LIBRARY.storage_gb — zonder dat het Shopify-
+  // metafieldtype daardoor verandert (dat blijft aan `kind` gekoppeld).
+  if ((kind === "select" || kind === "number") && options && !options.includes(value)) {
     return { key, message: `${label} moet een van de opties zijn.` };
   }
   if (kind === "boolean" && !["true", "false"].includes(value)) {

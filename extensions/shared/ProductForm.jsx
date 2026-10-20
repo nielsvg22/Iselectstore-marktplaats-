@@ -30,7 +30,11 @@ export function ProductField({ field, value, error, onChange }) {
       />
     );
   }
-  if (field.kind === "select") {
+  // Ook een "number"-veld met een `options`-lijst (zoals storage_gb) krijgt
+  // deze dropdown i.p.v. een los invoerveld — de metafield-opslag blijft
+  // numeriek (kind bepaalt dat, zie lib/shopify/metafields.ts), alleen de
+  // invoer wordt beperkt tot geldige waarden.
+  if (field.kind === "select" || (field.kind === "number" && field.options?.length)) {
     const options = field.options || [];
     const hasLegacyValue = Boolean(value) && !options.includes(value);
     const handle = (event) => {

@@ -70,7 +70,26 @@ export interface ProductTemplate {
 
 export const FIELD_LIBRARY: Record<string, FieldDef> = {
   model: { key: "model", label: "Model", kind: "text", required: true },
-  storage_gb: { key: "storage_gb", label: "Opslag (GB)", kind: "number", required: true },
+  // kind blijft "number" (metafieldTypeFor leidt het Shopify-metafieldtype
+  // — number_integer, al live zo gedefinieerd — rechtstreeks van kind af;
+  // "select" zou dat stilzwijgend naar tekst omzetten). `options` beperkt
+  // alleen het invoerveld tot een dropdown: een los getal maakte een
+  // typefout zoals "120" i.p.v. "128" mogelijk, wat Shopify prima
+  // accepteert maar bij GoedGeplaatst pas bij het syncen hard afketst
+  // ("invalid value for attributes[0] ... valid options: 8 GB, 16 GB,
+  // 32 GB, 64 GB, 128 GB, 256 GB, 512 GB, 1 TB" — live bevestigd op
+  // 2026-10-20). Deze exacte lijst dekt ook iPad's eigen, iets kleinere
+  // geldige set (lib/goedgeplaatst/attributeMap.ts's IPAD_CAPACITY_VALUES
+  // mist alleen "8" — geen bestaand iPad-model heeft dat sowieso) en
+  // MacBook/iMac/Mac mini (die bucketHarddisk toch in een bandbreedte
+  // groepeert, dus elke waarde hier is daar geldig).
+  storage_gb: {
+    key: "storage_gb",
+    label: "Opslag (GB)",
+    kind: "number",
+    required: true,
+    options: ["8", "16", "32", "64", "128", "256", "512", "1024"],
+  },
   color: { key: "color", label: "Kleur", kind: "text", required: true },
   battery_percentage: { key: "battery_percentage", label: "Batterijconditie (%)", kind: "number", required: false },
   condition: {

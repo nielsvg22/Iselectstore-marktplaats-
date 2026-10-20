@@ -96,8 +96,10 @@ describe("validateQuickProductData — Test A/B", () => {
       const data: Record<string, unknown> = {};
       for (const field of template.fields) {
         if (field.required) {
-          data[field.key] =
-            field.kind === "number" ? "10" : field.options ? field.options[0] : "X";
+          // `options` (e.g. storage_gb, a number-kind field with a fixed
+          // value set) takes priority over a bare "10" — that wouldn't be a
+          // valid option for such a field.
+          data[field.key] = field.options ? field.options[0] : field.kind === "number" ? "10" : "X";
         }
       }
       const result = validateQuickProductData(type, data);
