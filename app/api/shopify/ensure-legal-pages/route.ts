@@ -2,13 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { checkAdminPassword } from "@/lib/adminAuth";
-import {
-  getPageByHandle,
-  createPage,
-  updatePage,
-  getShopPolicies,
-  updateShopPolicy,
-} from "@/lib/shopify/client";
+import { getPageByHandle, createPage, updatePage } from "@/lib/shopify/client";
 
 export const dynamic = "force-dynamic";
 
@@ -26,60 +20,57 @@ const MIN_EXISTING_LENGTH = 200;
 /**
  * One-off: publishes draft content (sourced from bestbuyphone.nl, adapted to
  * iSelectStore branding, with [TER CONTROLE] markers on unconfirmed company
- * data — see the noteBox at the top of each page) for:
- *  - Algemene voorwaarden -> Shopify's built-in Terms of service policy
- *    (so it appears automatically in the footer via shop.policies, no
- *    separate page needed).
- *  - Klachtenprocedure -> a standalone Page (handle: klachtenprocedure),
- *    since Shopify has no built-in policy type for this.
+ * data — see the noteBox at the top of each page) as two standalone Pages:
+ *  - Algemene voorwaarden (handle: algemene-voorwaarden)
+ *  - Klachtenprocedure (handle: klachtenprocedure)
+ *
+ * Both use Pages rather than Shopify's built-in policy fields: the app's
+ * current OAuth scopes don't include read_legal_policies/write_legal_policies
+ * (confirmed live — GraphQL shopPolicies/shopPolicyUpdate both come back
+ * ACCESS_DENIED), and granting that needs a merchant re-authorization this
+ * route can't trigger on its own. A Page works with the scopes already
+ * granted (write_content, used by the existing ensure-battery-page route).
+ *
  * Never overwrites existing content longer than MIN_EXISTING_LENGTH —
  * reports what it found instead, per "overschrijf geen bestaande pagina's
  * die al goed functioneren".
  */
+async function ensurePage(handle: string, title: string, contentFile: string) {
+  const existingPage = await getPageByHandle(handle);
+  const pageLen = (existingPage?.body_html || "").replace(/<[^>]+>/g, "").trim().length;
+  if (existingPage && pageLen >= MIN_EXISTING_LENGTH) {
+    return {
+      action: "skipped",
+      reason: `Bestaande pagina heeft al ${pageLen} tekens inhoud — niet overschreven.`,
+      id: existingPage.id,
+      handle,
+    };
+  }
+  const bodyHtml = readContent(contentFile);
+  if (existingPage) {
+    const updated = await updatePage(existingPage.id, { bodyHtml, title });
+    return { action: "updated (was leeg/kort)", id: updated.id, handle: updated.handle };
+  }
+  const created = await createPage(title, handle, undefined, bodyHtml);
+  return { action: "created", id: created.id, handle: created.handle };
+}
+
 export async function GET(req: NextRequest) {
   const authError = checkAdminPassword(req);
   if (authError) return authError;
 
-  const result: Record<string, unknown> = {};
-
   try {
-    // --- Algemene voorwaarden -> Terms of service policy ---
-    const policies = await getShopPolicies();
-    const terms = policies.find((p) => p.type === "TERMS_OF_SERVICE");
-    const termsLen = (terms?.body || "").replace(/<[^>]+>/g, "").trim().length;
-    if (termsLen >= MIN_EXISTING_LENGTH) {
-      result.algemeneVoorwaarden = {
-        action: "skipped",
-        reason: `Bestaande 'Verkoopvoorwaarden'-policy heeft al ${termsLen} tekens inhoud — niet overschreven.`,
-        url: terms?.url,
-      };
-    } else {
-      const bodyHtml = readContent("algemene-voorwaarden.html");
-      const updated = await updateShopPolicy("TERMS_OF_SERVICE", bodyHtml);
-      result.algemeneVoorwaarden = { action: "published", url: updated.url };
-    }
-
-    // --- Klachtenprocedure -> standalone page ---
-    const existingPage = await getPageByHandle("klachtenprocedure");
-    const pageLen = (existingPage?.body_html || "").replace(/<[^>]+>/g, "").trim().length;
-    if (existingPage && pageLen >= MIN_EXISTING_LENGTH) {
-      result.klachtenprocedure = {
-        action: "skipped",
-        reason: `Bestaande pagina heeft al ${pageLen} tekens inhoud — niet overschreven.`,
-        id: existingPage.id,
-      };
-    } else {
-      const bodyHtml = readContent("klachtenprocedure.html");
-      if (existingPage) {
-        const updated = await updatePage(existingPage.id, { bodyHtml, title: "Klachtenprocedure" });
-        result.klachtenprocedure = { action: "updated (was leeg/kort)", id: updated.id };
-      } else {
-        const created = await createPage("Klachtenprocedure", "klachtenprocedure", undefined, bodyHtml);
-        result.klachtenprocedure = { action: "created", id: created.id };
-      }
-    }
-
-    return NextResponse.json({ ok: true, result });
+    const algemeneVoorwaarden = await ensurePage(
+      "algemene-voorwaarden",
+      "Algemene voorwaarden",
+      "algemene-voorwaarden.html"
+    );
+    const klachtenprocedure = await ensurePage(
+      "klachtenprocedure",
+      "Klachtenprocedure",
+      "klachtenprocedure.html"
+    );
+    return NextResponse.json({ ok: true, result: { algemeneVoorwaarden, klachtenprocedure } });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Onbekende fout." }, { status: 500 });
   }
