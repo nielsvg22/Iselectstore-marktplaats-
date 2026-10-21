@@ -55,9 +55,42 @@ async function ensurePage(handle: string, title: string, contentFile: string) {
   return { action: "created", id: created.id, handle: created.handle };
 }
 
+// Read-only diagnostic (?check=1): returns the live body_html as actually
+// stored by Shopify, so encoding issues (mangled é/–/€, double-escaped
+// entities) can be verified against the real bytes, not just this route's
+// own optimistic response.
+async function checkPages() {
+  const handles = ["algemene-voorwaarden", "klachtenprocedure"];
+  const pages = await Promise.all(handles.map((h) => getPageByHandle(h)));
+  return handles.reduce<Record<string, unknown>>((acc, handle, i) => {
+    const page = pages[i];
+    if (!page) {
+      acc[handle] = { found: false };
+      return acc;
+    }
+    const html = page.body_html || "";
+    acc[handle] = {
+      found: true,
+      length: html.length,
+      hasReplacementChar: html.includes("�"),
+      hasDoubleEncodedEntities: /Ã[\x80-\xBF]|â€/.test(html),
+      first300: html.slice(0, 300),
+    };
+    return acc;
+  }, {});
+}
+
 export async function GET(req: NextRequest) {
   const authError = checkAdminPassword(req);
   if (authError) return authError;
+
+  if (req.nextUrl.searchParams.get("check")) {
+    try {
+      return NextResponse.json({ ok: true, pages: await checkPages() });
+    } catch (err) {
+      return NextResponse.json({ error: err instanceof Error ? err.message : "Onbekende fout." }, { status: 500 });
+    }
+  }
 
   try {
     const algemeneVoorwaarden = await ensurePage(
