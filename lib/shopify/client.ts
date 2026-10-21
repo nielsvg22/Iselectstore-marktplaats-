@@ -307,6 +307,7 @@ export interface ShopifyPage {
   title: string;
   handle: string;
   template_suffix: string | null;
+  body_html?: string;
 }
 
 /** Looks up a Shopify page (Online winkel → Pagina's) by its exact handle. Returns null if none exists. */
@@ -330,10 +331,36 @@ export async function setPageTemplate(pageId: number, templateSuffix: string): P
 }
 
 /** Creates a new Shopify page (Online winkel → Pagina's) with the given title/handle/template. */
-export async function createPage(title: string, handle: string, templateSuffix?: string): Promise<ShopifyPage> {
+export async function createPage(
+  title: string,
+  handle: string,
+  templateSuffix?: string,
+  bodyHtml?: string
+): Promise<ShopifyPage> {
   const data = await shopifyFetch(`/pages.json`, {
     method: "POST",
-    body: JSON.stringify({ page: { title, handle, template_suffix: templateSuffix ?? null } }),
+    body: JSON.stringify({
+      page: { title, handle, template_suffix: templateSuffix ?? null, body_html: bodyHtml ?? null },
+    }),
+  });
+  return data.page as ShopifyPage;
+}
+
+/** Updates an existing page's title/content/template (only the given fields are sent). */
+export async function updatePage(
+  pageId: number,
+  fields: { title?: string; bodyHtml?: string; templateSuffix?: string }
+): Promise<ShopifyPage> {
+  const data = await shopifyFetch(`/pages/${pageId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({
+      page: {
+        id: pageId,
+        ...(fields.title !== undefined ? { title: fields.title } : {}),
+        ...(fields.bodyHtml !== undefined ? { body_html: fields.bodyHtml } : {}),
+        ...(fields.templateSuffix !== undefined ? { template_suffix: fields.templateSuffix } : {}),
+      },
+    }),
   });
   return data.page as ShopifyPage;
 }
@@ -735,4 +762,46 @@ export async function uploadShopVideo(buffer: Buffer, filename: string, mimeType
   if (!finalUrl) throw new Error(`Video ${filename} (id ${fileId}) was na 90s nog niet "READY" bij Shopify — probeer het statusendpoint later opnieuw met dit ID.`);
 
   return { id: fileId, url: finalUrl };
+}
+
+export interface ShopPolicy {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  url: string;
+}
+
+/** Reads the shop's built-in legal policies (Settings → Policies: refund/privacy/terms/shipping/legal notice). */
+export async function getShopPolicies(): Promise<ShopPolicy[]> {
+  const data = await shopifyGraphQL<{ shop: { shopPolicies: ShopPolicy[] } }>(
+    `query { shop { shopPolicies { id type title body url } } }`
+  );
+  return data.shop.shopPolicies;
+}
+
+/**
+ * Sets one of Shopify's built-in policy types (e.g. "TERMS_OF_SERVICE"), the
+ * same fields as Instellingen → Beleid in the admin. This is a full replace of
+ * that policy's body — callers should read getShopPolicies() first and decide
+ * whether the existing content is worth keeping before calling this.
+ */
+export async function updateShopPolicy(type: string, bodyHtml: string): Promise<ShopPolicy> {
+  const data = await shopifyGraphQL<{
+    shopPolicyUpdate: { shopPolicy: ShopPolicy | null; userErrors: { field: string[]; message: string }[] };
+  }>(
+    `mutation UpdatePolicy($shopPolicy: ShopPolicyInput!) {
+      shopPolicyUpdate(shopPolicy: $shopPolicy) {
+        shopPolicy { id type title body url }
+        userErrors { field message }
+      }
+    }`,
+    { shopPolicy: { type, body: bodyHtml } }
+  );
+  const { shopPolicy, userErrors } = data.shopPolicyUpdate;
+  if (userErrors.length > 0) {
+    throw new Error(`Shopify shopPolicyUpdate errors: ${JSON.stringify(userErrors)}`);
+  }
+  if (!shopPolicy) throw new Error("shopPolicyUpdate gaf geen policy terug.");
+  return shopPolicy;
 }
