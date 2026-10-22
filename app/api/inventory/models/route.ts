@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listProducts } from "@/lib/shopify/client";
 import { resolveProductIdentity } from "@/services/shopify/productIdentity";
+import { ShopifyProductType } from "@/lib/templates/types";
+
+// Only the device types iSelectStore actually tracks per-product (see
+// FIELD_LIBRARY/ShopifyProductType) are notify-worthy — the catalog also
+// has accessories (kabels, hoesjes, screenprotectors, adapters) with a
+// free-text product_type that was never meant to anchor a restock signup.
+const DEVICE_TYPES = new Set<ShopifyProductType>(["iPhone", "iPad", "MacBook", "iMac", "Mac mini", "Apple Watch"]);
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +97,7 @@ export async function GET(req: NextRequest) {
       const pairs: { productType: string; model: string }[] = [];
       for (const product of products) {
         const identity = await resolveProductIdentity(product);
+        if (!DEVICE_TYPES.has(identity.productType as ShopifyProductType)) continue;
         if (!identity.productType || !identity.model) continue;
         const key = `${identity.productType}|${identity.model}`.toLowerCase();
         if (seen.has(key)) continue;
