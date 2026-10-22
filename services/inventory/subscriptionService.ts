@@ -1,5 +1,5 @@
 import { query } from "@/lib/db";
-import { normalizeIdentity } from "@/services/shopify/productIdentity";
+import { normalizeIdentity, genericizeModel } from "@/services/shopify/productIdentity";
 
 /**
  * active      — waiting for a restock
@@ -65,7 +65,11 @@ export interface CreateSubscriptionResult {
 }
 
 export async function createSubscription(input: CreateSubscriptionInput): Promise<CreateSubscriptionResult> {
-  const normalized = normalizeIdentity(input);
+  // Both callers (the footer's own generic model picker, and a product-page
+  // signup that resolves a real product's exact, messy model string) must
+  // land on the same generic key, or a subscription from a product page
+  // would never match the generic one findActiveSubscriptions() looks up.
+  const normalized = normalizeIdentity({ ...input, model: genericizeModel(input.model) });
   const email = input.email.trim().toLowerCase();
 
   const rows = await query<SubscriptionRow & { inserted: boolean }>(
@@ -86,7 +90,10 @@ export async function createSubscription(input: CreateSubscriptionInput): Promis
 }
 
 export async function findActiveSubscriptions(productType: string, model: string, storage: string): Promise<InventorySubscription[]> {
-  const identity = normalizeIdentity({ productType, model, storage });
+  // Called at notify-time with a real product's exact model string — rows
+  // are stored generic (see createSubscription), so the lookup key must be
+  // genericized too, or a restocked product would never match a subscriber.
+  const identity = normalizeIdentity({ productType, model: genericizeModel(model), storage });
   const rows = await query<SubscriptionRow>(
     `SELECT * FROM inventory_notification_subscriptions
      WHERE product_type = $1 AND model = $2 AND storage = $3 AND status = 'active'`,

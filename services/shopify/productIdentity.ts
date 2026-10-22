@@ -46,6 +46,90 @@ export function normalizeModel(value: string | undefined | null): string {
   return String(value).replace(/\s+/g, " ").trim();
 }
 
+// Trailing color/finish/condition words sellers type directly into the
+// free-text "Model" field (longest phrases first, so "space gray" is cut
+// before a bare "gray" rule could leave "space" dangling).
+const TRAILING_COLOR_WORDS = [
+  "space gray",
+  "space grey",
+  "midnight green",
+  "pacific blue",
+  "rose gold",
+  "sierra blue",
+  "alpine green",
+  "deep purple",
+  "space zwart",
+  "spacegrijs",
+  "space grijs",
+  "goud",
+  "gold",
+  "zilver",
+  "silver",
+  "zwart",
+  "black",
+  "wit",
+  "white",
+  "grijs",
+  "gray",
+  "grey",
+  "blauw",
+  "blue",
+  "groen",
+  "green",
+  "rood",
+  "red",
+  "roze",
+  "pink",
+  "paars",
+  "purple",
+  "geel",
+  "yellow",
+  "oranje",
+  "orange",
+  "koraal",
+  "coral",
+  "titanium",
+  "starlight",
+  "midnight",
+  "product red",
+];
+
+/**
+ * Strips the free-text clutter sellers append after the real model name
+ * (color, condition, battery %, warranty notes, "/"-separated remarks) so
+ * subscribers can pick a genuinely generic model (e.g. "iPhone 14 Pro")
+ * instead of every messy per-listing variant. Only used by the
+ * subscribe/notify-match path — NOT by extractProductIdentity(), whose
+ * exact (non-generic) model string other features such as
+ * catalog/lifecycleService.ts still depend on.
+ */
+export function genericizeModel(value: string | undefined | null): string {
+  let model = normalizeModel(value);
+  if (!model) return "";
+
+  // Everything after the first "/" is always seller remarks
+  // ("iPhone 14 Pro zwart /licht gebruikt /100% batt /garantie").
+  model = model.split("/")[0].trim();
+
+  // Repeatedly strip a trailing color/finish word, longest match first,
+  // since "... Pro space gray" and "... Pro zwart" both need multiple passes
+  // to be safe against accidental double-ups ("... zwart zwart").
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const word of TRAILING_COLOR_WORDS) {
+      const re = new RegExp(`\\s+${word}$`, "i");
+      if (re.test(model)) {
+        model = model.replace(re, "").trim();
+        stripped = true;
+        break;
+      }
+    }
+  }
+
+  return model;
+}
+
 /**
  * Normalises a whole identity so subscribe-time and notify-time keys are
  * byte-for-byte identical. Every writer/reader of

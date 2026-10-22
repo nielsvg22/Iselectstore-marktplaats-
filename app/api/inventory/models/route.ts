@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listProducts } from "@/lib/shopify/client";
-import { resolveProductIdentity } from "@/services/shopify/productIdentity";
+import { resolveProductIdentity, genericizeModel } from "@/services/shopify/productIdentity";
 import { ShopifyProductType } from "@/lib/templates/types";
 
 // Only the device types iSelectStore actually tracks per-product (see
@@ -99,10 +99,12 @@ export async function GET(req: NextRequest) {
         const identity = await resolveProductIdentity(product);
         if (!DEVICE_TYPES.has(identity.productType as ShopifyProductType)) continue;
         if (!identity.productType || !identity.model) continue;
-        const key = `${identity.productType}|${identity.model}`.toLowerCase();
+        const genericModel = genericizeModel(identity.model);
+        if (!genericModel) continue;
+        const key = `${identity.productType}|${genericModel}`.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
-        pairs.push({ productType: identity.productType, model: identity.model });
+        pairs.push({ productType: identity.productType, model: genericModel });
       }
       pairs.sort((a, b) => a.productType.localeCompare(b.productType) || a.model.localeCompare(b.model));
       cache = { expiresAt: Date.now() + TTL_MS, pairs };
