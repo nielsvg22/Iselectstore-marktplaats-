@@ -31,14 +31,16 @@ const MIN_EXISTING_LENGTH = 200;
  * route can't trigger on its own. A Page works with the scopes already
  * granted (write_content, used by the existing ensure-battery-page route).
  *
- * Never overwrites existing content longer than MIN_EXISTING_LENGTH —
- * reports what it found instead, per "overschrijf geen bestaande pagina's
- * die al goed functioneren".
+ * Never overwrites existing content longer than MIN_EXISTING_LENGTH unless
+ * called with ?force=1 (for deliberate re-publishes of lib/legalPages/*.html,
+ * e.g. removing the draft noteBox after review) — otherwise reports what it
+ * found instead, per "overschrijf geen bestaande pagina's die al goed
+ * functioneren".
  */
-async function ensurePage(handle: string, title: string, contentFile: string) {
+async function ensurePage(handle: string, title: string, contentFile: string, force: boolean) {
   const existingPage = await getPageByHandle(handle);
   const pageLen = (existingPage?.body_html || "").replace(/<[^>]+>/g, "").trim().length;
-  if (existingPage && pageLen >= MIN_EXISTING_LENGTH) {
+  if (existingPage && pageLen >= MIN_EXISTING_LENGTH && !force) {
     return {
       action: "skipped",
       reason: `Bestaande pagina heeft al ${pageLen} tekens inhoud — niet overschreven.`,
@@ -92,16 +94,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const force = req.nextUrl.searchParams.get("force") === "1";
+
   try {
     const algemeneVoorwaarden = await ensurePage(
       "algemene-voorwaarden",
       "Algemene voorwaarden",
-      "algemene-voorwaarden.html"
+      "algemene-voorwaarden.html",
+      force
     );
     const klachtenprocedure = await ensurePage(
       "klachtenprocedure",
       "Klachtenprocedure",
-      "klachtenprocedure.html"
+      "klachtenprocedure.html",
+      force
     );
     return NextResponse.json({ ok: true, result: { algemeneVoorwaarden, klachtenprocedure } });
   } catch (err) {
