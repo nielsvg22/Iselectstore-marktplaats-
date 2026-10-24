@@ -36,7 +36,7 @@ export function buildPurchaseDeclarationEmailHtml(declaration: PurchaseDeclarati
           <p style="margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${coralInk};">Inkoopverklaring ontvangen</p>
           <h1 style="margin:0 0 16px;font-size:21px;line-height:1.35;color:${navy};">Bedankt, ${escapeHtml(name)}!</h1>
           <p style="margin:0 0 20px;font-size:14.5px;line-height:1.6;color:${navy};">
-            We hebben je inkoopverklaring voor onderstaand toestel in goede orde ontvangen. Een kopie (met je handtekening) vind je als bijlage bij deze e-mail. We nemen binnen 24 uur contact met je op om de verkoop af te ronden.
+            We hebben je inkoopverklaring voor onderstaand toestel in goede orde ontvangen. Een kopie (met je handtekening) vind je als bijlage bij deze e-mail.
           </p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${soft};border-radius:14px;border:1px solid ${line};">
             <tr>
@@ -69,7 +69,7 @@ export function buildPurchaseDeclarationEmailHtml(declaration: PurchaseDeclarati
     "",
     `Bedankt, ${name}!`,
     "",
-    `We hebben je inkoopverklaring voor ${declaration.product} in goede orde ontvangen. Een kopie (met je handtekening) vind je als bijlage. We nemen binnen 24 uur contact met je op om de verkoop af te ronden.`,
+    `We hebben je inkoopverklaring voor ${declaration.product} in goede orde ontvangen. Een kopie (met je handtekening) vind je als bijlage.`,
     "",
     `Bedrag: ${amountText}`,
     `Datum van verkoop: ${new Date(declaration.datumVerkoop).toLocaleDateString("nl-NL")}`,
