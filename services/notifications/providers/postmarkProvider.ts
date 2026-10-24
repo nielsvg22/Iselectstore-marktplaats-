@@ -1,5 +1,9 @@
 import { EmailProvider, EmailPayload, EmailSendResult } from "../types";
 
+function toBase64(content: Buffer | Uint8Array | string): string {
+  return typeof content === "string" ? content : Buffer.from(content).toString("base64");
+}
+
 export class PostmarkEmailProvider implements EmailProvider {
   readonly name = "postmark";
   private readonly apiKey: string;
@@ -25,6 +29,12 @@ export class PostmarkEmailProvider implements EmailProvider {
         HtmlBody: payload.html,
         TextBody: payload.text,
         MessageStream: "outbound",
+        Attachments: payload.attachments?.map((a) => ({
+          Name: a.filename,
+          Content: toBase64(a.content),
+          ContentType: a.contentType || "application/octet-stream",
+          ...(a.contentId ? { ContentID: a.contentId } : {}),
+        })),
       }),
     });
 

@@ -17,6 +17,7 @@ export default async function AdminPage() {
         <Link href="/admin/quick-create" style={{ color: "#1f3049" }}>➕ Nieuw product (AI) →</Link>
         <Link href="/admin/sold-images" style={{ color: "#1f3049" }}>⚙️ VERKOCHT-sticker instellingen →</Link>
         <Link href="/admin/inventory" style={{ color: "#1f3049" }}>🔔 Voorraadmeldingen →</Link>
+        <Link href="/admin/inkoopverklaringen" style={{ color: "#1f3049" }}>✍️ Inkoopverklaringen →</Link>
         <Link href="/admin/lifecycle" style={{ color: "#1f3049" }}>📦 28-dagen cleanup →</Link>
         <Link href="/admin/goedgeplaatst" style={{ color: "#1f3049" }}>🧩 GoedGeplaatst API →</Link>
       </div>
