@@ -191,15 +191,21 @@ export async function generateInkoopverklaringPdf(declaration: PurchaseDeclarati
     );
   }
 
-  const logoBytes = fs.readFileSync(path.join(process.cwd(), "lib/pdf/assets/iselectstore-logo-white.png"));
-  const logoImage = await doc.embedPng(logoBytes);
   const logoColorBytes = fs.readFileSync(path.join(process.cwd(), "lib/pdf/assets/iselectstore-logo.png"));
   const logoColorImage = await doc.embedPng(logoColorBytes);
-  const logoW = 132;
-  const logoH = (logoImage.height / logoImage.width) * logoW;
+  const logoW = 120;
+  const logoH = (logoColorImage.height / logoColorImage.width) * logoW;
   {
-    const topY = y;
-    ops.push(() => page.drawImage(logoImage, { x: cardX + 28, y: toY(topY + headerH / 2 + logoH / 2 + 6), width: logoW, height: logoH }));
+    // Same (colour) logo as the footer — on this navy background it needs a
+    // small white chip behind it to stay legible.
+    const chipPadX = 14;
+    const chipPadY = 10;
+    const chipW = logoW + chipPadX * 2;
+    const chipH = logoH + chipPadY * 2;
+    const chipTopY = y + (headerH - chipH) / 2;
+    roundedRect(chipTopY, cardX + 24, chipW, chipH, 10, WHITE);
+    const logoTopY = chipTopY + chipPadY;
+    ops.push(() => page.drawImage(logoColorImage, { x: cardX + 24 + chipPadX, y: toY(logoTopY + logoH), width: logoW, height: logoH }));
   }
 
   const title = "Inkoopverklaring";
