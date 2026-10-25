@@ -362,26 +362,26 @@ export async function generateInkoopverklaringPdf(declaration: PurchaseDeclarati
   const footLogoW = 96;
   const footLogoH = (logoColorImage.height / logoColorImage.width) * footLogoW;
   {
-    const topY = footerTop + 14 + footLogoH;
+    const topY = footerTop + 36 + footLogoH / 2;
     ops.push(() => page.drawImage(logoColorImage, { x: cardX + bodyPad, y: toY(topY), width: footLogoW, height: footLogoH }));
   }
 
   const footInfoX = cardX + bodyPad + footLogoW + 36;
-  iconPin(footInfoX + 4, footerTop + 17, MUTED);
-  text("Oude Apeldoornseweg 45-067, 7333 NR Apeldoorn", footerTop + 20, footInfoX + 16, 8.5, regular, MUTED);
-  iconEnvelope(footInfoX + 4, footerTop + 33, MUTED);
-  text("info@iselectstore.nl", footerTop + 34, footInfoX + 16, 8.5, regular, MUTED);
+  iconPin(footInfoX + 5, footerTop + 26, MUTED);
+  text("Oude Apeldoornseweg 45-067, 7333 NR Apeldoorn", footerTop + 29, footInfoX + 18, 8.5, regular, MUTED);
+  iconEnvelope(footInfoX + 5, footerTop + 50, MUTED);
+  text("info@iselectstore.nl", footerTop + 53, footInfoX + 18, 8.5, regular, MUTED);
 
   const footRight = cardX + cardW - bodyPad;
-  textRight("KVK 84268891", footerTop + 20, footRight, 8.5, regular, MUTED);
-  textRight("BTW NL003937269B13", footerTop + 34, footRight, 8.5, regular, MUTED);
+  textRight("KVK 84268891", footerTop + 29, footRight, 8.5, regular, MUTED);
+  textRight("BTW NL003937269B13", footerTop + 53, footRight, 8.5, regular, MUTED);
 
   // =========================================================================
   // Now that every section's position is known, draw the body card's shadow
   // and white rounded background FIRST (so it's behind all queued content),
   // then flush the queued content on top of it in order.
   // =========================================================================
-  const bodyCardBottom = footerTop + 52;
+  const bodyCardBottom = footerTop + 70;
   const bodyCardH = bodyCardBottom - bodyTop;
   page.drawSvgPath(roundedRectPath(cardW, bodyCardH, 18), { x: cardX + 2, y: toY(bodyTop) - 2, color: SHADOW });
   page.drawSvgPath(roundedRectPath(cardW, bodyCardH, 18), { x: cardX, y: toY(bodyTop), color: WHITE });
