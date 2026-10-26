@@ -55,7 +55,7 @@ RUN useradd --create-home --shell /bin/bash app
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 
 COPY . .
