@@ -22,7 +22,13 @@ export async function postToInstagram(imageUrl: string, caption: string): Promis
     return { mediaId: `mock-${Date.now()}`, mock: true };
   }
 
-  const base = `https://graph.facebook.com/${INSTAGRAM_GRAPH_API_VERSION}/${config.businessAccountId}`;
+  // graph.instagram.com, not graph.facebook.com — this integration uses the
+  // newer "Instagram API with Instagram Login" auth flow (token generated
+  // directly against an Instagram Business account, no Facebook Page
+  // involved), which calls a different host than the older Facebook-Login
+  // based Instagram Graph API. Verified empirically: a token from that flow
+  // only works against graph.instagram.com.
+  const base = `https://graph.instagram.com/${INSTAGRAM_GRAPH_API_VERSION}/${config.businessAccountId}`;
 
   const containerRes = await fetch(`${base}/media`, {
     method: "POST",
@@ -59,7 +65,7 @@ export async function deleteInstagramMedia(mediaId: string): Promise<void> {
   const config = getInstagramConfig();
   if (config.mock) return;
 
-  const res = await fetch(`https://graph.facebook.com/${INSTAGRAM_GRAPH_API_VERSION}/${mediaId}?access_token=${encodeURIComponent(config.accessToken!)}`, {
+  const res = await fetch(`https://graph.instagram.com/${INSTAGRAM_GRAPH_API_VERSION}/${mediaId}?access_token=${encodeURIComponent(config.accessToken!)}`, {
     method: "DELETE",
   });
   if (!res.ok) {
