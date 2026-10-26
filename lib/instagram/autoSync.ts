@@ -6,6 +6,23 @@ import { logSync } from "../logging";
 import { query } from "../db";
 
 /**
+ * Instagram rejects images outside roughly 4:5–1.91:1 — this shop's product
+ * photos are often full-length, near-2:1 tall shots (e.g. a real one seen
+ * at 1320x2868, ratio 0.46), well outside that range. Shopify's CDN crop
+ * transform (width/height/crop=center) reliably produces an exact square
+ * render — verified empirically against a real product image URL — so this
+ * is applied unconditionally rather than only when the ratio looks risky,
+ * keeping the behavior simple and consistent across every post.
+ */
+function toInstagramSafeImageUrl(url: string): string {
+  const u = new URL(url);
+  u.searchParams.set("width", "1080");
+  u.searchParams.set("height", "1080");
+  u.searchParams.set("crop", "center");
+  return u.toString();
+}
+
+/**
  * Automatically posts a new Shopify product to Instagram — called from
  * app/api/webhooks/products-create/route.ts, right alongside
  * autoCreateGoedgeplaatstConceptAd, so this happens the moment a product is
@@ -45,7 +62,7 @@ export async function autoPostProductToInstagram(shopifyProductId: string): Prom
 
     const caption = buildInstagramCaption(preview);
     const config = getInstagramConfig();
-    const result = await postToInstagram(preview.imageUrls[0], caption);
+    const result = await postToInstagram(toInstagramSafeImageUrl(preview.imageUrls[0]), caption);
 
     await query(
       `INSERT INTO instagram_post (shopify_product_id, instagram_media_id, environment, mock)
