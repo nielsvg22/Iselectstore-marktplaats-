@@ -373,9 +373,9 @@ export async function generateInkoopverklaringPdf(declaration: PurchaseDeclarati
   }
 
   const footInfoX = cardX + bodyPad + footLogoW + 36;
-  iconPin(footInfoX + 5, footerTop + 26, MUTED);
+  iconPin(footInfoX + 5.5, footerTop + 26, MUTED);
   text("Oude Apeldoornseweg 45-067, 7333 NR Apeldoorn", footerTop + 29, footInfoX + 18, 8.5, regular, MUTED);
-  iconEnvelope(footInfoX + 5, footerTop + 50, MUTED);
+  iconEnvelope(footInfoX + 7.5, footerTop + 50, MUTED);
   text("info@iselectstore.nl", footerTop + 53, footInfoX + 18, 8.5, regular, MUTED);
 
   const footRight = cardX + cardW - bodyPad;
