@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
       method: "POST",
       headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
       body: JSON.stringify({
-        query: `query { products(first: 1, sortKey: CREATED_AT, reverse: true) { edges { node { legacyResourceId title createdAt } } } }`,
+        query: `query { products(first: 1, sortKey: CREATED_AT, reverse: true) { edges { node { legacyResourceId title createdAt images(first: 3) { edges { node { url width height } } } } } } }`,
       }),
       cache: "no-store",
     });
