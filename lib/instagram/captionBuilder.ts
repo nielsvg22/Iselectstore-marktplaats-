@@ -7,11 +7,13 @@ import type { ProductPreview } from "../marktplaats/orchestrator";
  * (iPhone/iPad/MacBook/Mac/Watch each expose a different subset of this
  * same key set). Model/storage/color stay out of this list: they're
  * already part of shopifyTitle, so repeating them would be redundant.
- * warranty_months is handled separately below (its own "Inbegrepen" block,
- * matching the reference format) rather than listed here.
+ * warranty_months/accessories/box_included are handled separately below
+ * (their own "Inbegrepen" block, matching the reference format) rather
+ * than listed here.
  */
 const FACT_LABELS: Record<string, (value: string) => string> = {
   condition: (v) => `✨ Staat: ${v}`,
+  cosmetic_notes: (v) => `👀 Cosmetisch: ${v}`,
   battery_percentage: (v) => `🔋 Batterijcapaciteit: ${v}%`,
   sim_type: (v) => `📶 Simkaart: ${v}`,
   wifi_cellular: (v) => `🌐 Connectiviteit: ${v}`,
@@ -21,12 +23,12 @@ const FACT_LABELS: Record<string, (value: string) => string> = {
   chip: (v) => `⚙️ Chip: ${v}`,
   cycle_count: (v) => `🔁 Laadcycli: ${v}`,
   keyboard_layout: (v) => `⌨️ Toetsenbord: ${v}`,
-  keyboard_included: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "✅ Incl. toetsenbord" : ""),
-  mouse_included: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "✅ Incl. muis" : ""),
+  watch_band: (v) => `⌚ Bandje: ${v}`,
 };
 
 const FACT_ORDER = [
   "condition",
+  "cosmetic_notes",
   "battery_percentage",
   "sim_type",
   "wifi_cellular",
@@ -36,18 +38,19 @@ const FACT_ORDER = [
   "chip",
   "cycle_count",
   "keyboard_layout",
-  "keyboard_included",
-  "mouse_included",
+  "watch_band",
 ];
 
 /**
  * Builds an Instagram caption matching the client's established
- * BestBuyPhone-style format: "NIEUW! - <titel>", an emoji-bullet fact
- * list, an "Inbegrepen" block with the warranty as actually entered at
- * upload, the price, a call to action, and hashtags. Deliberately leaves
- * out sections the reference post has that this shop doesn't track data
- * for (shipping options, a new-price/refurbished-price comparison) rather
- * than inventing numbers.
+ * BestBuyPhone-style format 1-op-1: "NIEUW! - <titel>", an emoji-bullet
+ * fact list, an "Inbegrepen" block (warranty + accessories/box as actually
+ * entered at upload), a fixed "Verkoopopties" block (iSelectStore's
+ * standing pickup/shipping policy — same for every product, not
+ * per-product data), the price, a call to action, and hashtags. The one
+ * thing deliberately left out is the reference post's new-vs-refurbished
+ * price comparison — this shop doesn't record an original "nieuwprijs" per
+ * product, so that section would have to be invented.
  */
 export function buildInstagramCaption(preview: ProductPreview): string {
   const lines: string[] = [];
@@ -63,11 +66,21 @@ export function buildInstagramCaption(preview: ProductPreview): string {
   }).filter((f): f is string => f !== null);
   for (const fact of facts) lines.push(fact);
 
-  if (preview.data.warranty_months) {
+  const included: string[] = [];
+  if (preview.data.warranty_months) included.push(`${preview.data.warranty_months} maanden garantie`);
+  const boxIncluded = (preview.data.box_included || "").toLowerCase();
+  if (boxIncluded === "true" || boxIncluded === "ja") included.push("Originele doos");
+  if (preview.data.accessories) included.push(preview.data.accessories);
+  if (included.length > 0) {
     lines.push("");
     lines.push("Inbegrepen:");
-    lines.push(`${preview.data.warranty_months} maanden garantie`);
+    for (const item of included) lines.push(item);
   }
+
+  lines.push("");
+  lines.push("Verkoopopties:");
+  lines.push("🚗 Afhalen in Apeldoorn");
+  lines.push("📦 Verzenden");
 
   lines.push("");
   lines.push(`💶 Onze prijs: €${preview.price.toFixed(2).replace(".", ",")} ✅`);
