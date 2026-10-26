@@ -44,6 +44,28 @@ export async function postToInstagram(imageUrl: string, caption: string): Promis
     throw new Error(`Instagram media-container aanmaken mislukt (${containerRes.status}): ${JSON.stringify(containerJson)}`);
   }
 
+  // Instagram processes the image asynchronously after container creation —
+  // publishing immediately can hit "Media ID is not available" (seen live:
+  // error_subcode 2207027) if the container isn't FINISHED yet. Poll status
+  // before publishing, same pattern as lib/shopify/client.ts's file
+  // processing poll.
+  let ready = false;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const statusRes = await fetch(`https://graph.instagram.com/${INSTAGRAM_GRAPH_API_VERSION}/${containerJson.id}?fields=status_code&access_token=${encodeURIComponent(config.accessToken!)}`);
+    const statusJson = await statusRes.json();
+    if (statusJson.status_code === "FINISHED") {
+      ready = true;
+      break;
+    }
+    if (statusJson.status_code === "ERROR") {
+      throw new Error(`Instagram kon de media-container niet verwerken (status ERROR): ${JSON.stringify(statusJson)}`);
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  if (!ready) {
+    throw new Error(`Instagram media-container was na 15 pogingen nog niet "FINISHED" — later opnieuw proberen.`);
+  }
+
   const publishRes = await fetch(`${base}/media_publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
