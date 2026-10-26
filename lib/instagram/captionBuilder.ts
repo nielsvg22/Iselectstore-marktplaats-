@@ -42,6 +42,21 @@ const FACT_ORDER = [
   "mouse_included",
 ];
 
+/** One short, warm sales line — picked by condition when known, otherwise a generic pitch. */
+function buildPitchLine(preview: ProductPreview): string {
+  const condition = (preview.data.condition || "").toLowerCase();
+  if (condition.includes("nieuwstaat") || condition.includes("als nieuw")) {
+    return "Nauwelijks gebruikt en in topstaat — je ziet het verschil met nieuw niet.";
+  }
+  if (condition.includes("zeer goed")) {
+    return "Grondig gecontroleerd en in zeer goede staat — klaar voor een nieuwe eigenaar.";
+  }
+  if (condition.includes("goed")) {
+    return "Volledig getest en gecontroleerd, met lichte gebruikssporen — een échte deal.";
+  }
+  return "Grondig gecontroleerd en klaar voor een nieuwe eigenaar.";
+}
+
 /**
  * Builds a short, Instagram-appropriate caption from a product preview —
  * deliberately NOT the same text as marktplaatsDescription (that's written
@@ -54,7 +69,11 @@ const FACT_ORDER = [
 export function buildInstagramCaption(preview: ProductPreview): string {
   const lines: string[] = [];
 
-  lines.push(`${preview.shopifyTitle} ✨`);
+  lines.push("✨ Nieuw in ons assortiment!");
+  lines.push(preview.shopifyTitle);
+  lines.push("");
+  lines.push(buildPitchLine(preview));
+  lines.push("");
   lines.push(`€${preview.price.toFixed(2).replace(".", ",")}`);
 
   const facts = FACT_ORDER.map((key) => {
@@ -69,7 +88,7 @@ export function buildInstagramCaption(preview: ProductPreview): string {
   lines.push("");
   lines.push("Nu te koop bij iSelectStore — link in bio.");
   lines.push("");
-  lines.push("#iselectstore #refurbished #tweedehands #apple");
+  lines.push("#iselectstore #refurbished #tweedehands #apple #nieuwinassortiment");
 
   return lines.join("\n");
 }
