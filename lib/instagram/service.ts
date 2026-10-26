@@ -6,20 +6,44 @@ export interface InstagramPostResult {
 }
 
 /**
- * Publishes a single-image post to Instagram via the Graph API's two-step
- * Content Publishing flow: create a media container from a (publicly
- * reachable) image URL, then publish that container. Mirrors
- * lib/goedgeplaatst/service.ts's style (throw on real API errors, let the
- * caller — lib/instagram/autoSync.ts — decide how to log/swallow them).
+ * Instagram processes a media container asynchronously after creation —
+ * publishing (or attaching it as a carousel child) immediately can hit
+ * "Media ID is not available" (seen live: error_subcode 2207027) if the
+ * container isn't FINISHED yet. Shared by both the single-image and
+ * carousel-child containers below.
+ */
+async function pollUntilFinished(containerId: string, accessToken: string): Promise<void> {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const statusRes = await fetch(`https://graph.instagram.com/${INSTAGRAM_GRAPH_API_VERSION}/${containerId}?fields=status_code&access_token=${encodeURIComponent(accessToken)}`);
+    const statusJson = await statusRes.json();
+    if (statusJson.status_code === "FINISHED") return;
+    if (statusJson.status_code === "ERROR") {
+      throw new Error(`Instagram kon de media-container niet verwerken (status ERROR): ${JSON.stringify(statusJson)}`);
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  throw new Error(`Instagram media-container was na 15 pogingen nog niet "FINISHED" — later opnieuw proberen.`);
+}
+
+/**
+ * Publishes a post to Instagram via the Graph API's Content Publishing
+ * flow. A single image_urls entry posts as a normal photo post; 2+ entries
+ * post as a carousel (create each child container with is_carousel_item,
+ * then a parent CAROUSEL container referencing them, then publish) —
+ * Instagram allows 2-10 images per carousel, so anything past the 10th is
+ * dropped rather than erroring the whole post over an excess photo.
  *
- * imageUrl must be publicly fetchable by Meta's servers — Shopify's CDN
+ * image_urls must be publicly fetchable by Meta's servers — Shopify's CDN
  * product image URLs already are, no extra hosting needed.
  */
-export async function postToInstagram(imageUrl: string, caption: string): Promise<InstagramPostResult> {
+export async function postToInstagram(imageUrls: string[], caption: string): Promise<InstagramPostResult> {
   const config = getInstagramConfig();
 
   if (config.mock) {
     return { mediaId: `mock-${Date.now()}`, mock: true };
+  }
+  if (imageUrls.length === 0) {
+    throw new Error("postToInstagram: geen afbeeldingen opgegeven.");
   }
 
   // graph.instagram.com, not graph.facebook.com — this integration uses the
@@ -29,50 +53,56 @@ export async function postToInstagram(imageUrl: string, caption: string): Promis
   // based Instagram Graph API. Verified empirically: a token from that flow
   // only works against graph.instagram.com.
   const base = `https://graph.instagram.com/${INSTAGRAM_GRAPH_API_VERSION}/${config.businessAccountId}`;
+  const accessToken = config.accessToken!;
 
-  const containerRes = await fetch(`${base}/media`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      image_url: imageUrl,
-      caption,
-      access_token: config.accessToken,
-    }),
-  });
-  const containerJson = await containerRes.json();
-  if (!containerRes.ok || !containerJson.id) {
-    throw new Error(`Instagram media-container aanmaken mislukt (${containerRes.status}): ${JSON.stringify(containerJson)}`);
-  }
+  let publishCreationId: string;
 
-  // Instagram processes the image asynchronously after container creation —
-  // publishing immediately can hit "Media ID is not available" (seen live:
-  // error_subcode 2207027) if the container isn't FINISHED yet. Poll status
-  // before publishing, same pattern as lib/shopify/client.ts's file
-  // processing poll.
-  let ready = false;
-  for (let attempt = 0; attempt < 15; attempt++) {
-    const statusRes = await fetch(`https://graph.instagram.com/${INSTAGRAM_GRAPH_API_VERSION}/${containerJson.id}?fields=status_code&access_token=${encodeURIComponent(config.accessToken!)}`);
-    const statusJson = await statusRes.json();
-    if (statusJson.status_code === "FINISHED") {
-      ready = true;
-      break;
+  if (imageUrls.length === 1) {
+    const containerRes = await fetch(`${base}/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_url: imageUrls[0], caption, access_token: accessToken }),
+    });
+    const containerJson = await containerRes.json();
+    if (!containerRes.ok || !containerJson.id) {
+      throw new Error(`Instagram media-container aanmaken mislukt (${containerRes.status}): ${JSON.stringify(containerJson)}`);
     }
-    if (statusJson.status_code === "ERROR") {
-      throw new Error(`Instagram kon de media-container niet verwerken (status ERROR): ${JSON.stringify(statusJson)}`);
+    await pollUntilFinished(containerJson.id, accessToken);
+    publishCreationId = containerJson.id;
+  } else {
+    const images = imageUrls.slice(0, 10);
+    const childIds: string[] = [];
+    for (const imageUrl of images) {
+      const childRes = await fetch(`${base}/media`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_url: imageUrl, is_carousel_item: true, access_token: accessToken }),
+      });
+      const childJson = await childRes.json();
+      if (!childRes.ok || !childJson.id) {
+        throw new Error(`Instagram carrousel-item aanmaken mislukt (${childRes.status}): ${JSON.stringify(childJson)}`);
+      }
+      await pollUntilFinished(childJson.id, accessToken);
+      childIds.push(childJson.id);
     }
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-  if (!ready) {
-    throw new Error(`Instagram media-container was na 15 pogingen nog niet "FINISHED" — later opnieuw proberen.`);
+
+    const carouselRes = await fetch(`${base}/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ media_type: "CAROUSEL", children: childIds, caption, access_token: accessToken }),
+    });
+    const carouselJson = await carouselRes.json();
+    if (!carouselRes.ok || !carouselJson.id) {
+      throw new Error(`Instagram carrousel aanmaken mislukt (${carouselRes.status}): ${JSON.stringify(carouselJson)}`);
+    }
+    await pollUntilFinished(carouselJson.id, accessToken);
+    publishCreationId = carouselJson.id;
   }
 
   const publishRes = await fetch(`${base}/media_publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      creation_id: containerJson.id,
-      access_token: config.accessToken,
-    }),
+    body: JSON.stringify({ creation_id: publishCreationId, access_token: accessToken }),
   });
   const publishJson = await publishRes.json();
   if (!publishRes.ok || !publishJson.id) {

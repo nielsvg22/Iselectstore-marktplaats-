@@ -62,7 +62,7 @@ export async function autoPostProductToInstagram(shopifyProductId: string): Prom
 
     const caption = buildInstagramCaption(preview);
     const config = getInstagramConfig();
-    const result = await postToInstagram(toInstagramSafeImageUrl(preview.imageUrls[0]), caption);
+    const result = await postToInstagram(preview.imageUrls.map(toInstagramSafeImageUrl), caption);
 
     await query(
       `INSERT INTO instagram_post (shopify_product_id, instagram_media_id, environment, mock)
