@@ -1,0 +1,11 @@
+api_version = "2026-01"
+
+[[extensions]]
+name = "Marktplaats kenmerken"
+handle = "marktplaats-velden"
+uid = "f4630d63-a754-e81e-a0e9-fdebab55a09177259fa4"
+type = "ui_extension"
+
+[[extensions.targeting]]
+target = "admin.product-details.block.render"
+module = "./src/BlockExtension.jsx"

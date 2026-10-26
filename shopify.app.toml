@@ -2,7 +2,7 @@
 
 client_id = "db247c0b3b7c65f9b5d8d798ae30b925"
 name = "Beheer"
-application_url = "https://iselectstore-marktplaats-app.vercel.app"
+application_url = "https://ucwekluofewm5m92pdptoxbh.85.190.105.138.sslip.io"
 embedded = true
 
 [build]
@@ -14,16 +14,16 @@ scopes = "read_content,read_products,write_content,write_products,read_inventory
 
 [auth]
 redirect_urls = [
-  "https://iselectstore-marktplaats-app.vercel.app/api/auth/callback"
+  "https://ucwekluofewm5m92pdptoxbh.85.190.105.138.sslip.io/api/auth/callback"
 ]
 
 # Klantportaal: OAuth met PKCE voor de Customer Account API (nieuwe klantaccounts).
 [customer_authentication]
 redirect_uris = [
-  "https://iselectstore-marktplaats-app.vercel.app/portaal/callback"
+  "https://ucwekluofewm5m92pdptoxbh.85.190.105.138.sslip.io/portaal/callback"
 ]
 logout_urls = [
-  "https://iselectstore-marktplaats-app.vercel.app/portaal"
+  "https://ucwekluofewm5m92pdptoxbh.85.190.105.138.sslip.io/portaal"
 ]
 
 [webhooks]
@@ -31,7 +31,7 @@ api_version = "2024-10"
 
   [[webhooks.subscriptions]]
   topics = [ "products/update" ]
-  uri = "https://iselectstore-marktplaats-app.vercel.app/api/webhooks/products-update"
+  uri = "https://ucwekluofewm5m92pdptoxbh.85.190.105.138.sslip.io/api/webhooks/products-update"
 
 [pos]
 embedded = false
