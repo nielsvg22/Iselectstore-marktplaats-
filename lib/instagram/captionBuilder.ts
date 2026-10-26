@@ -1,35 +1,33 @@
 import type { ProductPreview } from "../marktplaats/orchestrator";
 
 /**
- * Human-readable Dutch labels for the structured fields entered when a
- * product is uploaded (see lib/templates/registry.ts's shopifyFeatureFields
- * per product type — iPhone/iPad/MacBook/Mac/Watch each expose a different
- * subset of this same key set). Model/storage/color are deliberately left
- * out here: they're already part of shopifyTitle, so repeating them would
- * be redundant in the caption.
+ * Emoji-bullet fact list, styled after the client's other store's
+ * (BestBuyPhone) Instagram format — one icon + label per filled-in field.
+ * See lib/templates/registry.ts's shopifyFeatureFields per product type
+ * (iPhone/iPad/MacBook/Mac/Watch each expose a different subset of this
+ * same key set). Model/storage/color stay out of this list: they're
+ * already part of shopifyTitle, so repeating them would be redundant.
+ * warranty_months is handled separately below (its own "Inbegrepen" block,
+ * matching the reference format) rather than listed here.
  */
 const FACT_LABELS: Record<string, (value: string) => string> = {
-  condition: (v) => `Conditie: ${v}`,
-  battery_percentage: (v) => `Batterij: ${v}%`,
-  warranty_months: (v) => `${v} maanden garantie`,
-  sim_type: (v) => `${v}`,
-  wifi_cellular: (v) => `${v}`,
-  screen_size: (v) => `${v}" scherm`,
-  apple_pencil_support: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "Apple Pencil-ondersteuning" : ""),
-  ram_gb: (v) => `${v}GB RAM`,
-  chip: (v) => `${v}-chip`,
-  cycle_count: (v) => `${v} laadcycli`,
-  keyboard_layout: (v) => `${v}-toetsenbord`,
-  keyboard_included: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "Incl. toetsenbord" : ""),
-  mouse_included: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "Incl. muis" : ""),
+  condition: (v) => `✨ Staat: ${v}`,
+  battery_percentage: (v) => `🔋 Batterijcapaciteit: ${v}%`,
+  sim_type: (v) => `📶 Simkaart: ${v}`,
+  wifi_cellular: (v) => `🌐 Connectiviteit: ${v}`,
+  screen_size: (v) => `📐 Schermgrootte: ${v}"`,
+  apple_pencil_support: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "✏️ Apple Pencil-ondersteuning" : ""),
+  ram_gb: (v) => `💾 RAM: ${v}GB`,
+  chip: (v) => `⚙️ Chip: ${v}`,
+  cycle_count: (v) => `🔁 Laadcycli: ${v}`,
+  keyboard_layout: (v) => `⌨️ Toetsenbord: ${v}`,
+  keyboard_included: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "✅ Incl. toetsenbord" : ""),
+  mouse_included: (v) => (v.toLowerCase() === "true" || v.toLowerCase() === "ja" ? "✅ Incl. muis" : ""),
 };
 
-// Order matters: condition/battery/warranty first (what a buyer cares about
-// most), the rest after, in roughly the order registry.ts lists them.
 const FACT_ORDER = [
   "condition",
   "battery_percentage",
-  "warranty_months",
   "sim_type",
   "wifi_cellular",
   "screen_size",
@@ -42,39 +40,20 @@ const FACT_ORDER = [
   "mouse_included",
 ];
 
-/** One short, warm sales line — picked by condition when known, otherwise a generic pitch. */
-function buildPitchLine(preview: ProductPreview): string {
-  const condition = (preview.data.condition || "").toLowerCase();
-  if (condition.includes("nieuwstaat") || condition.includes("als nieuw")) {
-    return "Nauwelijks gebruikt en in topstaat — je ziet het verschil met nieuw niet.";
-  }
-  if (condition.includes("zeer goed")) {
-    return "Grondig gecontroleerd en in zeer goede staat — klaar voor een nieuwe eigenaar.";
-  }
-  if (condition.includes("goed")) {
-    return "Volledig getest en gecontroleerd, met lichte gebruikssporen — een échte deal.";
-  }
-  return "Grondig gecontroleerd en klaar voor een nieuwe eigenaar.";
-}
-
 /**
- * Builds a short, Instagram-appropriate caption from a product preview —
- * deliberately NOT the same text as marktplaatsDescription (that's written
- * for Marktplaats' listing format/audience, far too long and formal for an
- * Instagram caption). Pulls in whichever structured fields (lib/templates/
- * registry.ts's shopifyFeatureFields) were actually filled in when the
- * product was uploaded — works across iPhone/iPad/MacBook/Mac/Watch alike,
- * since each only ever populates its own relevant subset of preview.data.
+ * Builds an Instagram caption matching the client's established
+ * BestBuyPhone-style format: "NIEUW! - <titel>", an emoji-bullet fact
+ * list, an "Inbegrepen" block with the warranty as actually entered at
+ * upload, the price, a call to action, and hashtags. Deliberately leaves
+ * out sections the reference post has that this shop doesn't track data
+ * for (shipping options, a new-price/refurbished-price comparison) rather
+ * than inventing numbers.
  */
 export function buildInstagramCaption(preview: ProductPreview): string {
   const lines: string[] = [];
 
-  lines.push("✨ Nieuw in ons assortiment!");
-  lines.push(preview.shopifyTitle);
+  lines.push(`🔔 NIEUW! - ${preview.shopifyTitle}`);
   lines.push("");
-  lines.push(buildPitchLine(preview));
-  lines.push("");
-  lines.push(`€${preview.price.toFixed(2).replace(".", ",")}`);
 
   const facts = FACT_ORDER.map((key) => {
     const value = preview.data[key];
@@ -82,11 +61,20 @@ export function buildInstagramCaption(preview: ProductPreview): string {
     const text = FACT_LABELS[key](value.trim());
     return text.length > 0 ? text : null;
   }).filter((f): f is string => f !== null);
+  for (const fact of facts) lines.push(fact);
 
-  if (facts.length > 0) lines.push(facts.join(" · "));
+  if (preview.data.warranty_months) {
+    lines.push("");
+    lines.push("Inbegrepen:");
+    lines.push(`${preview.data.warranty_months} maanden garantie`);
+  }
 
   lines.push("");
-  lines.push("Nu te koop bij iSelectStore — link in bio.");
+  lines.push(`💶 Onze prijs: €${preview.price.toFixed(2).replace(".", ",")} ✅`);
+
+  lines.push("");
+  lines.push("📩 Stuur ons een bericht via Instagram om 'm te reserveren, of bestel direct via de link in bio!");
+
   lines.push("");
   lines.push("#iselectstore #refurbished #tweedehands #apple #nieuwinassortiment");
 
