@@ -3,6 +3,30 @@ import { createSubscription } from "@/services/inventory/subscriptionService";
 import { getProduct } from "@/lib/shopify/client";
 import { resolveProductIdentity } from "@/services/shopify/productIdentity";
 import { consumeRateLimit } from "@/lib/rateLimit";
+import { createEmailProvider } from "@/services/notifications/emailProviderFactory";
+
+/** Internal notification — tells the shop who just signed up for a stock alert and for what. Best-effort: never blocks or fails the subscription itself. */
+async function notifyShopOfNewSubscription(params: { email: string; productType: string; model: string; storage: string }): Promise<void> {
+  const notifyTo = process.env.SHOP_NOTIFY_EMAIL || process.env.GOEDGEPLAATST_MANUFACTURER_EMAIL;
+  if (!notifyTo) return;
+
+  try {
+    const provider = createEmailProvider();
+    const modelLabel = [params.model, params.storage].filter(Boolean).join(" ");
+    await provider.send({
+      to: notifyTo,
+      subject: `Nieuwe voorraadmelding-aanmelding: ${modelLabel}`,
+      html: `<p>Iemand heeft zich aangemeld voor een voorraadmelding.</p>
+        <p><b>E-mail:</b> ${params.email}<br>
+        <b>Producttype:</b> ${params.productType}<br>
+        <b>Model:</b> ${modelLabel}</p>`,
+      text: `Nieuwe voorraadmelding-aanmelding\n\nE-mail: ${params.email}\nProducttype: ${params.productType}\nModel: ${modelLabel}`,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[inventory-subscribe] notify-shop mail mislukt:", message);
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -171,6 +195,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { created } = await createSubscription({ email, productType, model, storage });
+
+    if (created) {
+      // Fire-and-forget: the subscription is already saved, a mail hiccup
+      // here must never affect the response the storefront is waiting on.
+      notifyShopOfNewSubscription({ email, productType, model, storage }).catch(() => {});
+    }
 
     if (!created) {
       return NextResponse.json(
