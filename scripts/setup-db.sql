@@ -272,3 +272,20 @@ CREATE INDEX IF NOT EXISTS idx_product_lifecycle_sold_at
   WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_product_lifecycle_status
   ON product_lifecycle(status);
+
+-- =============================================================================
+-- Instagram auto-post (lib/instagram/) — one row per product ever posted,
+-- used purely as an idempotency guard (never double-post on a retried
+-- webhook). `environment`/`mock` record which account/mode it went to,
+-- since this integration is deliberately run against a separate test
+-- Instagram account first (see lib/instagram/config.ts).
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS instagram_post (
+  id SERIAL PRIMARY KEY,
+  shopify_product_id VARCHAR(64) NOT NULL UNIQUE,
+  instagram_media_id VARCHAR(255),
+  environment VARCHAR(20) NOT NULL DEFAULT 'test',
+  mock BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

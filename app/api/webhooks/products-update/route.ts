@@ -24,6 +24,7 @@ import { updateLifecycleState } from "@/services/catalog/lifecycleService";
 import { checkProductObjectAndNotify } from "@/services/inventory/notificationService";
 import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 import { getLinkForShopifyProduct } from "@/lib/goedgeplaatst/service";
+import { autoPostProductToInstagram } from "@/lib/instagram/autoSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -116,6 +117,14 @@ export async function POST(req: NextRequest) {
         /* autoCreateGoedgeplaatstConceptAd already logs its own failures */
       });
     }
+
+    // Covers the common create-then-add-photos flow: products-create fired
+    // with zero images (so autoPostProductToInstagram skipped), the photos
+    // landed in this update. Own idempotency guard (instagram_post table)
+    // means this is a cheap no-op on every later update once posted.
+    await autoPostProductToInstagram(productId).catch(() => {
+      /* autoPostProductToInstagram already logs its own failures */
+    });
   }
 
   return NextResponse.json({ ok: true });
