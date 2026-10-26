@@ -13,14 +13,57 @@ async function notifyShopOfNewSubscription(params: { email: string; productType:
   try {
     const provider = createEmailProvider();
     const modelLabel = [params.model, params.storage].filter(Boolean).join(" ");
+
+    const navy = "#1f3049";
+    const coralInk = "#ef6570";
+    const muted = "#6b7280";
+    const line = "#e7e9ec";
+    const soft = "#f7f7f7";
+    const escape = (v: string) =>
+      v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+    const html = `
+    <div style="background:${soft};padding:32px 16px;font-family:'Poppins',Arial,Helvetica,sans-serif;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid ${line};">
+        <tr>
+          <td style="background:${navy};padding:20px 32px;">
+            <span style="color:#fff;font-size:16px;font-weight:700;letter-spacing:.02em;">iSelectStore</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px;">
+            <p style="margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${coralInk};">Nieuwe voorraadmelding-aanmelding</p>
+            <h1 style="margin:0 0 20px;font-size:20px;line-height:1.35;color:${navy};">${escape(modelLabel)}</h1>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${soft};border-radius:14px;border:1px solid ${line};">
+              <tr>
+                <td style="padding:16px 18px;">
+                  <p style="margin:0 0 8px;font-size:13px;color:${muted};">E-mail</p>
+                  <p style="margin:0 0 14px;font-size:15px;font-weight:600;color:${navy};">${escape(params.email)}</p>
+                  <p style="margin:0 0 8px;font-size:13px;color:${muted};">Producttype</p>
+                  <p style="margin:0 0 14px;font-size:15px;font-weight:600;color:${navy};">${escape(params.productType)}</p>
+                  <p style="margin:0 0 8px;font-size:13px;color:${muted};">Model</p>
+                  <p style="margin:0;font-size:15px;font-weight:600;color:${navy};">${escape(modelLabel)}</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>`;
+
+    const text = [
+      "iSelectStore — Nieuwe voorraadmelding-aanmelding",
+      "",
+      `E-mail: ${params.email}`,
+      `Producttype: ${params.productType}`,
+      `Model: ${modelLabel}`,
+    ].join("\n");
+
     await provider.send({
       to: notifyTo,
       subject: `Nieuwe voorraadmelding-aanmelding: ${modelLabel}`,
-      html: `<p>Iemand heeft zich aangemeld voor een voorraadmelding.</p>
-        <p><b>E-mail:</b> ${params.email}<br>
-        <b>Producttype:</b> ${params.productType}<br>
-        <b>Model:</b> ${modelLabel}</p>`,
-      text: `Nieuwe voorraadmelding-aanmelding\n\nE-mail: ${params.email}\nProducttype: ${params.productType}\nModel: ${modelLabel}`,
+      html,
+      text,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
