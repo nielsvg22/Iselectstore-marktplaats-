@@ -10,13 +10,23 @@ import { query } from "../db";
  * square image — reusing the same Shopify CDN crop transform as
  * lib/instagram/autoSync.ts's toInstagramSafeImageUrl for the same reason:
  * this shop's product photos are often tall, full-length shots.
+ *
+ * TikTok also requires the image URL's own domain to be a verified
+ * property of the app — confirmed live (403 url_ownership_unverified)
+ * when passing the raw cdn.shopify.com URL. We don't control Shopify's
+ * CDN domain, so this routes the (already cropped) URL through
+ * app/api/tiktok/image-proxy, which re-serves it from our own verified
+ * backend domain instead.
  */
 function toTiktokSafeImageUrl(url: string): string {
   const u = new URL(url);
   u.searchParams.set("width", "1080");
   u.searchParams.set("height", "1080");
   u.searchParams.set("crop", "center");
-  return u.toString();
+
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+  if (!appUrl) return u.toString();
+  return `${appUrl}/api/tiktok/image-proxy?url=${encodeURIComponent(u.toString())}`;
 }
 
 /**
