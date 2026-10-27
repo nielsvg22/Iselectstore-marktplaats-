@@ -79,8 +79,11 @@ export async function POST(req: NextRequest) {
     // lib/instagram/config.ts's INSTAGRAM_ENVIRONMENT) until that's
     // deliberately switched to the real iSelectStore account; a missing
     // token forces mock mode either way, so this is a safe no-op until
-    // credentials are configured.
-    await autoPostProductToInstagram(productId).catch(() => {
+    // credentials are configured. Deliberately NOT awaited — the function
+    // itself waits out a grace period (INSTAGRAM_POST_DELAY_SECONDS) before
+    // actually posting, to let a merchant's in-progress multi-photo upload
+    // finish landing, and that wait must not hold up this webhook response.
+    autoPostProductToInstagram(productId).catch(() => {
       /* autoPostProductToInstagram already logs its own failures */
     });
 
@@ -89,8 +92,9 @@ export async function POST(req: NextRequest) {
     // app (see lib/tiktok/config.ts's TIKTOK_ENVIRONMENT) until that's
     // deliberately switched to the real iSelectStore account; a missing
     // token forces mock mode either way, so this is a safe no-op until
-    // credentials are configured.
-    await autoPostProductToTiktok(productId).catch(() => {
+    // credentials are configured. Also deliberately not awaited — same
+    // grace-period reasoning as autoPostProductToInstagram above.
+    autoPostProductToTiktok(productId).catch(() => {
       /* autoPostProductToTiktok already logs its own failures */
     });
   }

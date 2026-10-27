@@ -61,6 +61,19 @@ export async function autoPostProductToTiktok(shopifyProductId: string): Promise
     if (claim.length === 0) return; // another delivery already claimed/posted this product
     claimed = true;
 
+    // Grace period before actually fetching+posting — see the identical
+    // comment in lib/instagram/autoSync.ts's autoPostProductToInstagram
+    // for why: whichever webhook delivery wins the claim above would
+    // otherwise post immediately with whatever subset of photos existed
+    // at that exact moment (confirmed live: a product posted to TikTok
+    // with only 2 of several photos). The webhook route calls this
+    // function without awaiting it specifically so this delay never holds
+    // up the webhook response.
+    const delaySeconds = Number(process.env.TIKTOK_POST_DELAY_SECONDS || 25);
+    if (delaySeconds > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
+    }
+
     const preview = await buildProductPreview(shopifyProductId);
     if (!preview.validation.publishable) {
       await query("DELETE FROM tiktok_post WHERE shopify_product_id = $1", [shopifyProductId]);

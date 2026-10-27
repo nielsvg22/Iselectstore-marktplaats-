@@ -61,6 +61,22 @@ export async function autoPostProductToInstagram(shopifyProductId: string): Prom
     if (claim.length === 0) return; // another delivery already claimed/posted this product
     claimed = true;
 
+    // Grace period before actually fetching+posting: when a merchant
+    // uploads several photos in quick succession, Shopify fires a
+    // separate products/update delivery per photo, often a few seconds
+    // apart. Without this delay, whichever delivery wins the claim above
+    // posts immediately with whatever subset of photos existed at that
+    // exact moment — confirmed live (a product posted to Instagram with
+    // only 1 of several photos). buildProductPreview always re-fetches
+    // the product fresh from Shopify (not the webhook payload), so
+    // waiting here before calling it picks up any photos that land during
+    // the wait. The webhook route calls this function without awaiting it
+    // specifically so this delay never holds up the webhook response.
+    const delaySeconds = Number(process.env.INSTAGRAM_POST_DELAY_SECONDS || 25);
+    if (delaySeconds > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
+    }
+
     const preview = await buildProductPreview(shopifyProductId);
     if (!preview.validation.publishable) {
       await query("DELETE FROM instagram_post WHERE shopify_product_id = $1", [shopifyProductId]);

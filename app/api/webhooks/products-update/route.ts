@@ -123,14 +123,17 @@ export async function POST(req: NextRequest) {
     // with zero images (so autoPostProductToInstagram skipped), the photos
     // landed in this update. Own idempotency guard (instagram_post table)
     // means this is a cheap no-op on every later update once posted.
-    await autoPostProductToInstagram(productId).catch(() => {
+    // Deliberately NOT awaited — see the matching comment in
+    // app/api/webhooks/products-create/route.ts for why (the function's
+    // own grace-period delay must not hold up this webhook response).
+    autoPostProductToInstagram(productId).catch(() => {
       /* autoPostProductToInstagram already logs its own failures */
     });
 
     // Same create-then-add-photos coverage as above, for TikTok — own
     // idempotency guard (tiktok_post table) means this is a cheap no-op on
-    // every later update once posted.
-    await autoPostProductToTiktok(productId).catch(() => {
+    // every later update once posted. Also not awaited, same reason.
+    autoPostProductToTiktok(productId).catch(() => {
       /* autoPostProductToTiktok already logs its own failures */
     });
   }
