@@ -38,12 +38,32 @@ function toInstagramSafeImageUrl(url: string): string {
  *    real one's credentials are deliberately swapped in.
  */
 export async function autoPostProductToInstagram(shopifyProductId: string): Promise<void> {
+  let claimed = false;
   try {
-    const already = await query<{ id: number }>("SELECT id FROM instagram_post WHERE shopify_product_id = $1", [shopifyProductId]);
-    if (already.length > 0) return;
+    // Atomically claim this product BEFORE doing anything slow — Shopify
+    // fires a products/update webhook delivery per photo added during the
+    // quick-create flow, so several deliveries can be in flight for the
+    // same product at once. A plain "SELECT, then INSERT after posting"
+    // has a race window: every concurrent delivery passes the SELECT
+    // before any of them finishes the INSERT, so every one of them posts
+    // to Instagram for real — confirmed live (6 concurrent deliveries → 6
+    // real posts, with 5 INSERTs failing afterward on the unique
+    // constraint, silently, since by then the damage was already done).
+    // INSERT ... ON CONFLICT DO NOTHING is atomic: only the delivery that
+    // actually wins the row proceeds to post.
+    const claim = await query<{ id: number }>(
+      `INSERT INTO instagram_post (shopify_product_id, instagram_media_id, environment, mock)
+       VALUES ($1, NULL, 'pending', false)
+       ON CONFLICT (shopify_product_id) DO NOTHING
+       RETURNING id`,
+      [shopifyProductId]
+    );
+    if (claim.length === 0) return; // another delivery already claimed/posted this product
+    claimed = true;
 
     const preview = await buildProductPreview(shopifyProductId);
     if (!preview.validation.publishable) {
+      await query("DELETE FROM instagram_post WHERE shopify_product_id = $1", [shopifyProductId]);
       await logSync({
         shopifyProductId,
         action: "instagram_auto_post_skipped",
@@ -52,6 +72,7 @@ export async function autoPostProductToInstagram(shopifyProductId: string): Prom
       return;
     }
     if (preview.imageUrls.length === 0) {
+      await query("DELETE FROM instagram_post WHERE shopify_product_id = $1", [shopifyProductId]);
       await logSync({
         shopifyProductId,
         action: "instagram_auto_post_skipped",
@@ -65,8 +86,7 @@ export async function autoPostProductToInstagram(shopifyProductId: string): Prom
     const result = await postToInstagram(preview.imageUrls.map(toInstagramSafeImageUrl), caption);
 
     await query(
-      `INSERT INTO instagram_post (shopify_product_id, instagram_media_id, environment, mock)
-       VALUES ($1, $2, $3, $4)`,
+      `UPDATE instagram_post SET instagram_media_id = $2, environment = $3, mock = $4 WHERE shopify_product_id = $1`,
       [shopifyProductId, result.mediaId, config.environment, result.mock]
     );
 
@@ -77,6 +97,12 @@ export async function autoPostProductToInstagram(shopifyProductId: string): Prom
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Release the claim on failure so a later, legitimate retry (e.g. once
+    // whatever broke is fixed) isn't permanently blocked by a dead row —
+    // same trade-off skip/validation paths above already make.
+    if (claimed) {
+      await query("DELETE FROM instagram_post WHERE shopify_product_id = $1", [shopifyProductId]).catch(() => {});
+    }
     await logSync({
       shopifyProductId,
       action: "instagram_auto_post_error",
