@@ -289,3 +289,17 @@ CREATE TABLE IF NOT EXISTS instagram_post (
   mock BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- =============================================================================
+-- TikTok auto-post (lib/tiktok/) — same idempotency-guard shape as
+-- instagram_post above (see lib/tiktok/autoSync.ts).
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS tiktok_post (
+  id SERIAL PRIMARY KEY,
+  shopify_product_id VARCHAR(64) NOT NULL UNIQUE,
+  tiktok_publish_id VARCHAR(255),
+  environment VARCHAR(20) NOT NULL DEFAULT 'test',
+  mock BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

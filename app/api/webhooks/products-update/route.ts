@@ -25,6 +25,7 @@ import { checkProductObjectAndNotify } from "@/services/inventory/notificationSe
 import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 import { getLinkForShopifyProduct } from "@/lib/goedgeplaatst/service";
 import { autoPostProductToInstagram } from "@/lib/instagram/autoSync";
+import { autoPostProductToTiktok } from "@/lib/tiktok/autoSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -124,6 +125,13 @@ export async function POST(req: NextRequest) {
     // means this is a cheap no-op on every later update once posted.
     await autoPostProductToInstagram(productId).catch(() => {
       /* autoPostProductToInstagram already logs its own failures */
+    });
+
+    // Same create-then-add-photos coverage as above, for TikTok — own
+    // idempotency guard (tiktok_post table) means this is a cheap no-op on
+    // every later update once posted.
+    await autoPostProductToTiktok(productId).catch(() => {
+      /* autoPostProductToTiktok already logs its own failures */
     });
   }
 

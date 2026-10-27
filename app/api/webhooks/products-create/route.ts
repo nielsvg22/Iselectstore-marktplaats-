@@ -8,6 +8,7 @@ import { updateLifecycleState } from "@/services/catalog/lifecycleService";
 import { checkProductObjectAndNotify } from "@/services/inventory/notificationService";
 import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 import { autoPostProductToInstagram } from "@/lib/instagram/autoSync";
+import { autoPostProductToTiktok } from "@/lib/tiktok/autoSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -81,6 +82,16 @@ export async function POST(req: NextRequest) {
     // credentials are configured.
     await autoPostProductToInstagram(productId).catch(() => {
       /* autoPostProductToInstagram already logs its own failures */
+    });
+
+    // Fourth, independent channel — auto-posts the product to TikTok as a
+    // photo carousel. Currently points at a separate TEST TikTok Sandbox
+    // app (see lib/tiktok/config.ts's TIKTOK_ENVIRONMENT) until that's
+    // deliberately switched to the real iSelectStore account; a missing
+    // token forces mock mode either way, so this is a safe no-op until
+    // credentials are configured.
+    await autoPostProductToTiktok(productId).catch(() => {
+      /* autoPostProductToTiktok already logs its own failures */
     });
   }
 
