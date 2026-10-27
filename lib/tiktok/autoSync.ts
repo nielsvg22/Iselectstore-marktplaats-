@@ -81,9 +81,9 @@ export async function autoPostProductToTiktok(shopifyProductId: string): Promise
       return;
     }
 
-    const title = buildTiktokCaption(preview);
+    const caption = buildTiktokCaption(preview);
     const config = getTiktokConfig();
-    const result = await postToTiktok(preview.imageUrls.map(toTiktokSafeImageUrl), title);
+    const result = await postToTiktok(preview.imageUrls.map(toTiktokSafeImageUrl), caption.title, caption.description);
 
     await query(
       `UPDATE tiktok_post SET tiktok_publish_id = $2, environment = $3, mock = $4 WHERE shopify_product_id = $1`,

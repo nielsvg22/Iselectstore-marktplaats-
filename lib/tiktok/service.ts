@@ -67,7 +67,7 @@ async function pollUntilPublished(publishId: string, accessToken: string): Promi
  * TikTok allows up to 35 images per photo post; anything past that is
  * dropped rather than erroring the whole post over an excess photo.
  */
-export async function postToTiktok(imageUrls: string[], title: string): Promise<TiktokPostResult> {
+export async function postToTiktok(imageUrls: string[], title: string, description: string): Promise<TiktokPostResult> {
   const config = getTiktokConfig();
 
   if (config.mock) {
@@ -86,9 +86,13 @@ export async function postToTiktok(imageUrls: string[], title: string): Promise<
     body: JSON.stringify({
       post_info: {
         title,
+        description,
         privacy_level: getTiktokPrivacyLevel(),
         disable_comment: false,
-        auto_add_music: true,
+        // Explicitly off — TikTok's "auto_add_music" attaches a random
+        // trending track to photo posts by default, which isn't wanted
+        // for a product listing.
+        auto_add_music: false,
       },
       source_info: {
         source: "PULL_FROM_URL",
