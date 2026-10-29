@@ -1,0 +1,20 @@
+# Learn more about configuring your checkout UI extension:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-10"
+
+[[extensions]]
+name = "iselect-pickup-note"
+handle = "iselect-pickup-note"
+type = "ui_extension"
+uid = "a7c3e1f9-2b4d-4a6e-9c1f-8e5d3a2b6c90"
+
+# Shows directly under the pickup-location card in checkout (not hidden
+# behind selection/the Shopify-only "ready for pickup" email) — Shopify's
+# own localPickupSettings.instructions field only surfaces in that email,
+# confirmed via Shopify's help docs, never in the checkout UI itself.
+[[extensions.targeting]]
+module = "./src/Checkout.jsx"
+target = "purchase.checkout.pickup-location-option-item.render-after"
