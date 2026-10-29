@@ -11,10 +11,13 @@ handle = "iselect-pickup-note"
 type = "ui_extension"
 uid = "a7c3e1f9-2b4d-4a6e-9c1f-8e5d3a2b6c90"
 
-# Shows directly under the pickup-location card in checkout (not hidden
+# Shows directly under the pickup-location list in checkout (not hidden
 # behind selection/the Shopify-only "ready for pickup" email) — Shopify's
 # own localPickupSettings.instructions field only surfaces in that email,
 # confirmed via Shopify's help docs, never in the checkout UI itself.
+# Uses the list-level (not item-level) target: it's a guaranteed static
+# mount point (same family as header/footer render-after), whereas the
+# per-item target didn't render live with a single pickup location.
 [[extensions.targeting]]
 module = "./src/Checkout.jsx"
-target = "purchase.checkout.pickup-location-option-item.render-after"
+target = "purchase.checkout.pickup-location-list.render-after"
