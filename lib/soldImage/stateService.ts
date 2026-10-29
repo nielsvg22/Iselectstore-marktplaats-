@@ -56,6 +56,37 @@ export async function markPending(shopifyProductId: string, applyAfter: Date): P
   );
 }
 
+/**
+ * Atomically claims a product for processApply — only the caller that
+ * actually flips 'pending' -> 'applying' may proceed. Shopify commonly
+ * delivers products/update more than once in quick succession, and
+ * processProductNow can also race the cron's runDueSoldImageJobs; without
+ * this, two near-simultaneous callers both read status 'pending' before
+ * either finishes, and each independently uploads its own "verkocht-*"
+ * image — confirmed live (a product ended up with two sold-overlay
+ * uploads, one auto-renamed by Shopify over a filename collision).
+ */
+export async function claimForApply(shopifyProductId: string): Promise<boolean> {
+  const rows = await query<{ shopify_product_id: string }>(
+    `UPDATE sold_image_state SET status = 'applying', updated_at = now()
+     WHERE shopify_product_id = $1 AND status = 'pending'
+     RETURNING shopify_product_id`,
+    [shopifyProductId]
+  );
+  return rows.length > 0;
+}
+
+/** Same race protection as claimForApply, for the restore path ('restoring' -> 'restoring_now'). */
+export async function claimForRestore(shopifyProductId: string): Promise<boolean> {
+  const rows = await query<{ shopify_product_id: string }>(
+    `UPDATE sold_image_state SET status = 'restoring_now', updated_at = now()
+     WHERE shopify_product_id = $1 AND status = 'restoring'
+     RETURNING shopify_product_id`,
+    [shopifyProductId]
+  );
+  return rows.length > 0;
+}
+
 /** Marks a product as back in stock, pending restoration of the original image. No-op unless it's currently applied. */
 export async function markRestoring(shopifyProductId: string): Promise<void> {
   await query(

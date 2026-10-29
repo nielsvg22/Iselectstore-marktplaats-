@@ -4,7 +4,7 @@ export type StickerPosition = "center" | "top-left" | "top-right" | "bottom-left
  * position always renders as a rounded band regardless of this setting. */
 export type StickerStyle = "pill" | "ribbon";
 export type SoldImageMode = "none" | "auto";
-export type SoldImageStatus = "none" | "pending" | "applied" | "restoring" | "restored" | "error";
+export type SoldImageStatus = "none" | "pending" | "applying" | "applied" | "restoring" | "restoring_now" | "restored" | "error";
 
 export interface SoldImageSettings {
   mode: SoldImageMode;

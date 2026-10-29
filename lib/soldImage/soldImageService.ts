@@ -5,7 +5,7 @@
 // stay idempotent.
 import { getProduct, addProductImage, setImagePosition, deleteProductImage } from "../shopify/client";
 import { getSoldImageSettings } from "./settingsService";
-import { getDueStates, getSoldImageState, markApplied, markError, markRestored } from "./stateService";
+import { getDueStates, getSoldImageState, markApplied, markError, markRestored, claimForApply, claimForRestore } from "./stateService";
 import { isSoldOut } from "./detectSoldOut";
 import { applySoldOverlay } from "./overlay";
 import { logSync } from "../logging";
@@ -80,8 +80,13 @@ async function processRestore(state: SoldImageState): Promise<void> {
 async function processOne(state: SoldImageState): Promise<void> {
   try {
     if (state.status === "pending") {
+      // Atomic claim — see claimForApply's own comment. A concurrent
+      // caller that loses the claim simply returns, leaving the winner
+      // to do the actual upload+reposition work exactly once.
+      if (!(await claimForApply(state.shopifyProductId))) return;
       await processApply(state);
     } else if (state.status === "restoring") {
+      if (!(await claimForRestore(state.shopifyProductId))) return;
       await processRestore(state);
     }
   } catch (err) {
