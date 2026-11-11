@@ -9,7 +9,7 @@ import { checkProductObjectAndNotify } from "@/services/inventory/notificationSe
 import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 import { autoPostProductToInstagram } from "@/lib/instagram/autoSync";
 import { autoPostProductToTiktok } from "@/lib/tiktok/autoSync";
-import { autoSyncGoogleCondition } from "@/lib/google/autoSync";
+import { autoSyncCatalogCondition } from "@/lib/catalog/autoSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -49,17 +49,17 @@ export async function POST(req: NextRequest) {
     logSync({ shopifyProductId: productId, action: "lifecycle_update_error", message }).catch(() => {});
   });
 
-  // Sets the Google Shopping condition attribute (new/used, never
-  // "refurbished" — this store never refurbishes anything, it resells
-  // inspected used devices) on every variant, derived from product type.
-  // Runs regardless of stock level — a listing shouldn't wait for
-  // inventory to get this set. See lib/google/condition.ts.
-  await autoSyncGoogleCondition(
+  // Sets the product condition attribute for Google Shopping + Meta
+  // (new/used, never "refurbished" — this store never refurbishes
+  // anything, it resells inspected used devices), derived from product
+  // type. Runs regardless of stock level — a listing shouldn't wait for
+  // inventory to get this set. See lib/catalog/condition.ts.
+  await autoSyncCatalogCondition(
     productId,
     product.product_type,
     product.variants.map((v) => v.id)
   ).catch(() => {
-    /* autoSyncGoogleCondition already logs its own failures */
+    /* autoSyncCatalogCondition already logs its own failures */
   });
 
   // Covers the (uncommon) case a product is created with photos already
