@@ -26,6 +26,7 @@ import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 import { getLinkForShopifyProduct } from "@/lib/goedgeplaatst/service";
 import { autoPostProductToInstagram } from "@/lib/instagram/autoSync";
 import { autoPostProductToTiktok } from "@/lib/tiktok/autoSync";
+import { autoSyncGoogleCondition } from "@/lib/google/autoSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -82,6 +83,18 @@ export async function POST(req: NextRequest) {
   await updateLifecycleState(product).catch((err) => {
     const message = err instanceof Error ? err.message : String(err);
     logSync({ shopifyProductId: productId, action: "lifecycle_update_error", message }).catch(() => {});
+  });
+
+  // Keep the Google Shopping condition attribute in sync — cheap to just
+  // re-set on every update (e.g. if a product's type is ever corrected).
+  // See lib/google/condition.ts for why this is always new/used, never
+  // "refurbished".
+  await autoSyncGoogleCondition(
+    productId,
+    product.product_type,
+    product.variants.map((v) => v.id)
+  ).catch(() => {
+    /* autoSyncGoogleCondition already logs its own failures */
   });
 
   // If the product is back in stock, notify matching subscriptions inline.

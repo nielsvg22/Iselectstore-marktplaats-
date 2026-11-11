@@ -277,6 +277,29 @@ export async function setProductMetafields(productId: string, writes: MetafieldW
   }
 }
 
+/**
+ * Upserts a single metafield on a product VARIANT (not the product itself).
+ * Needed for the Google Shopping `condition` attribute specifically — the
+ * Google & YouTube sales channel app reads that from the variant's
+ * `mm-google-shopping.condition` metafield, not a product-level one.
+ */
+export async function setVariantMetafield(variantId: number, namespace: string, key: string, value: string, type = "single_line_text_field"): Promise<void> {
+  const data = await shopifyFetch(`/variants/${variantId}/metafields.json?limit=250`);
+  const existing = (data.metafields as ShopifyMetafield[]).find((m) => m.namespace === namespace && m.key === key);
+
+  if (existing?.id) {
+    await shopifyFetch(`/variants/${variantId}/metafields/${existing.id}.json`, {
+      method: "PUT",
+      body: JSON.stringify({ metafield: { id: existing.id, value, type } }),
+    });
+  } else {
+    await shopifyFetch(`/variants/${variantId}/metafields.json`, {
+      method: "POST",
+      body: JSON.stringify({ metafield: { namespace, key, value, type } }),
+    });
+  }
+}
+
 /** Uploads a new product image from raw bytes. Never touches existing images — used to add the generated "sold" image alongside the untouched original. */
 export async function addProductImage(productId: string, imageBuffer: Buffer, filename: string): Promise<ShopifyImage> {
   const data = await shopifyFetch(`/products/${productId}/images.json`, {
