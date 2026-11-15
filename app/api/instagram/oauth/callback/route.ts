@@ -28,7 +28,12 @@ export async function GET(req: NextRequest) {
     return new NextResponse("INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET ontbreken in de omgeving.", { status: 500 });
   }
 
-  const redirectUri = `${req.nextUrl.origin}/api/instagram/oauth/callback`;
+  // Hardcoded rather than derived from req.nextUrl.origin: behind Coolify's
+  // reverse proxy the request's apparent origin doesn't reliably match the
+  // public URL actually used in the OAuth dialog (confirmed live — caused
+  // "redirect_uri is identical" failures), and Instagram requires an exact
+  // match against what was sent to /oauth/authorize.
+  const redirectUri = "https://marktplaats-vnc.85.190.105.138.sslip.io/api/instagram/oauth/callback";
 
   try {
     const shortLivedForm = new URLSearchParams({
