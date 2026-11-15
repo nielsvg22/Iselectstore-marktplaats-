@@ -37,7 +37,7 @@ async function pollUntilFinished(containerId: string, accessToken: string): Prom
  * product image URLs already are, no extra hosting needed.
  */
 export async function postToInstagram(imageUrls: string[], caption: string): Promise<InstagramPostResult> {
-  const config = getInstagramConfig();
+  const config = await getInstagramConfig();
 
   if (config.mock) {
     return { mediaId: `mock-${Date.now()}`, mock: true };
@@ -114,7 +114,7 @@ export async function postToInstagram(imageUrls: string[], caption: string): Pro
 
 /** Deletes a specific Instagram media post — used to clean up test posts, never called from the auto-sync path itself. */
 export async function deleteInstagramMedia(mediaId: string): Promise<void> {
-  const config = getInstagramConfig();
+  const config = await getInstagramConfig();
   if (config.mock) return;
 
   const res = await fetch(`https://graph.instagram.com/${INSTAGRAM_GRAPH_API_VERSION}/${mediaId}?access_token=${encodeURIComponent(config.accessToken!)}`, {

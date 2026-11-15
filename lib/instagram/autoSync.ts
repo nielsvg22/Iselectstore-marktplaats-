@@ -98,7 +98,7 @@ export async function autoPostProductToInstagram(shopifyProductId: string): Prom
     }
 
     const caption = buildInstagramCaption(preview);
-    const config = getInstagramConfig();
+    const config = await getInstagramConfig();
     const result = await postToInstagram(preview.imageUrls.map(toInstagramSafeImageUrl), caption);
 
     await query(

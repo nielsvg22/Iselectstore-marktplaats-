@@ -13,6 +13,8 @@
 // mock mode is forced — there is no way to accidentally post for real
 // without a real token, same rule as lib/goedgeplaatst/config.ts.
 
+import { getInstagramAccessToken } from "./tokenService";
+
 function envString(name: string): string | null {
   const raw = process.env[name];
   if (raw === undefined) return null;
@@ -29,12 +31,14 @@ export interface InstagramConfig {
   mock: boolean;
 }
 
-export function getInstagramConfig(): InstagramConfig {
+export async function getInstagramConfig(): Promise<InstagramConfig> {
   const raw = (process.env.INSTAGRAM_ENVIRONMENT || "test").trim().toLowerCase();
   const environment: InstagramEnvironment = raw === "production" ? "production" : "test";
 
   const businessAccountId = environment === "production" ? envString("INSTAGRAM_BUSINESS_ACCOUNT_ID") : envString("INSTAGRAM_TEST_BUSINESS_ACCOUNT_ID");
-  const accessToken = environment === "production" ? envString("INSTAGRAM_ACCESS_TOKEN") : envString("INSTAGRAM_TEST_ACCESS_TOKEN");
+  // Reads (and, when needed, refreshes + persists) the token via
+  // tokenService instead of the env var directly — see that module for why.
+  const accessToken = await getInstagramAccessToken(environment);
 
   return {
     environment,
