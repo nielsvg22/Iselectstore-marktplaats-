@@ -1,0 +1,22 @@
+# Learn more about configuring your checkout UI extension:
+# https://shopify.dev/docs/api/checkout-ui-extensions/latest/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-10"
+
+[[extensions]]
+name = "iselect-postnl-badge"
+handle = "iselect-postnl-badge"
+type = "ui_extension"
+uid = "c2e4f6a8-1d3b-4c5e-8f7a-9b0d2e4f6a8c"
+
+# Per-shipping-option target (not the list-level target) so the badge
+# attaches to each carrier-shipped option individually — local pickup uses
+# a separate target family entirely (see iselect-pickup-note), so this
+# never collides with it. Shows regardless of the option's title text:
+# every current shipping rate is fulfilled via PostNL, so there's no
+# title-matching logic to keep in sync if a rate name ever changes.
+[[extensions.targeting]]
+module = "./src/Checkout.jsx"
+target = "purchase.checkout.shipping-option-item.render-after"
