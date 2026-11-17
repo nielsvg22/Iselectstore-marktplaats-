@@ -26,6 +26,7 @@ import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 import { getLinkForShopifyProduct } from "@/lib/goedgeplaatst/service";
 import { autoPostProductToInstagram } from "@/lib/instagram/autoSync";
 import { autoPostProductToTiktok } from "@/lib/tiktok/autoSync";
+import { autoPostProductToFacebook } from "@/lib/facebook/autoSync";
 import { autoSyncCatalogCondition } from "@/lib/catalog/autoSync";
 
 export const dynamic = "force-dynamic";
@@ -148,6 +149,14 @@ export async function POST(req: NextRequest) {
     // every later update once posted. Also not awaited, same reason.
     autoPostProductToTiktok(productId).catch(() => {
       /* autoPostProductToTiktok already logs its own failures */
+    });
+
+    // Same create-then-add-photos coverage as above, for the Facebook
+    // Page — own idempotency guard (facebook_post table) means this is a
+    // cheap no-op on every later update once posted. Also not awaited,
+    // same reason.
+    autoPostProductToFacebook(productId).catch(() => {
+      /* autoPostProductToFacebook already logs its own failures */
     });
   }
 

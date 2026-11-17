@@ -9,6 +9,7 @@ import { checkProductObjectAndNotify } from "@/services/inventory/notificationSe
 import { autoCreateGoedgeplaatstConceptAd } from "@/lib/goedgeplaatst/autoSync";
 import { autoPostProductToInstagram } from "@/lib/instagram/autoSync";
 import { autoPostProductToTiktok } from "@/lib/tiktok/autoSync";
+import { autoPostProductToFacebook } from "@/lib/facebook/autoSync";
 import { autoSyncCatalogCondition } from "@/lib/catalog/autoSync";
 
 export const dynamic = "force-dynamic";
@@ -110,6 +111,16 @@ export async function POST(req: NextRequest) {
     // grace-period reasoning as autoPostProductToInstagram above.
     autoPostProductToTiktok(productId).catch(() => {
       /* autoPostProductToTiktok already logs its own failures */
+    });
+
+    // Fifth, independent channel — auto-posts the product to the
+    // iSelectStore Facebook Page. Currently mock-only until
+    // FACEBOOK_TEST_PAGE_ID/FACEBOOK_TEST_PAGE_ACCESS_TOKEN (or the
+    // production pair) are configured — see lib/facebook/config.ts. Also
+    // deliberately not awaited, same grace-period reasoning as the other
+    // channels above.
+    autoPostProductToFacebook(productId).catch(() => {
+      /* autoPostProductToFacebook already logs its own failures */
     });
   }
 
