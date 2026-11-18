@@ -23,10 +23,15 @@ export async function GET(req: NextRequest) {
     return new NextResponse("Geen 'code' parameter gevonden in de redirect.", { status: 400 });
   }
 
-  const appId = process.env.INSTAGRAM_APP_ID;
-  const appSecret = process.env.INSTAGRAM_APP_SECRET;
+  // Deliberately separate from INSTAGRAM_APP_ID/SECRET: those are the
+  // Instagram-login product's own app id within the same Meta app
+  // container, which Facebook rejected here with "ongeldige app-id" —
+  // confirmed live that Facebook Login needs the app's main App ID
+  // instead (App settings → Algemeen in the Meta dashboard).
+  const appId = process.env.FACEBOOK_APP_ID;
+  const appSecret = process.env.FACEBOOK_APP_SECRET;
   if (!appId || !appSecret) {
-    return new NextResponse("INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET ontbreken in de omgeving (dezelfde Meta-app wordt hier hergebruikt).", { status: 500 });
+    return new NextResponse("FACEBOOK_APP_ID / FACEBOOK_APP_SECRET ontbreken in de omgeving.", { status: 500 });
   }
 
   // Must exactly match what was sent to the Facebook Login authorize
