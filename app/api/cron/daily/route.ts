@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { runDueSoldImageJobs } from "@/lib/soldImage/soldImageService";
 import { runCleanup } from "@/services/catalog/lifecycleService";
 import { getInstagramAccessToken } from "@/lib/instagram/tokenService";
+import { syncWebwinkelKeurRating } from "@/lib/webwinkelkeur/sync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,7 +24,18 @@ export async function POST(req: NextRequest) {
     // no-ops when the token isn't close to expiry yet.
     const instagramTokenResult = await Promise.allSettled([getInstagramAccessToken("test"), getInstagramAccessToken("production")]);
 
-    return NextResponse.json({ ok: true, soldImage: soldImageResult, cleanup: cleanupResult, instagramTokenChecked: instagramTokenResult.map((r) => r.status) });
+    // Keeps the shop.metafields.custom.rating_average / review_count that
+    // the theme reads (homepage, "Hoe wij werken", productpagina's) in sync
+    // with WebwinkelKeur's actual numbers once a day.
+    const webwinkelkeurResult = await syncWebwinkelKeurRating();
+
+    return NextResponse.json({
+      ok: true,
+      soldImage: soldImageResult,
+      cleanup: cleanupResult,
+      instagramTokenChecked: instagramTokenResult.map((r) => r.status),
+      webwinkelkeur: webwinkelkeurResult,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });

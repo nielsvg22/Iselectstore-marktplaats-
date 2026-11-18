@@ -278,6 +278,28 @@ export async function setProductMetafields(productId: string, writes: MetafieldW
 }
 
 /**
+ * Upserts a single metafield on the SHOP itself (not a product/variant) —
+ * used for store-wide values like the WebwinkelKeur rating, which the
+ * theme can then read via `shop.metafields.custom.*` in Liquid without any
+ * client-side API call.
+ */
+export async function setShopMetafield(namespace: string, key: string, value: string, type = "single_line_text_field"): Promise<void> {
+  const existing = await shopifyFetch(`/metafields.json?namespace=${namespace}&key=${key}`);
+  const current = (existing.metafields as ShopifyMetafield[] | undefined)?.[0];
+  if (current?.id) {
+    await shopifyFetch(`/metafields/${current.id}.json`, {
+      method: "PUT",
+      body: JSON.stringify({ metafield: { id: current.id, value, type } }),
+    });
+  } else {
+    await shopifyFetch(`/metafields.json`, {
+      method: "POST",
+      body: JSON.stringify({ metafield: { namespace, key, value, type } }),
+    });
+  }
+}
+
+/**
  * Upserts a single metafield on a product VARIANT (not the product itself).
  * Needed for the Google Shopping `condition` attribute specifically — the
  * Google & YouTube sales channel app reads that from the variant's
